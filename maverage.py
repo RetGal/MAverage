@@ -1128,6 +1128,8 @@ def update_stop_loss_order(stop_loss_price: float, amount: float, side: str, sto
             if CONF.exchange == 'bitmex':
                 stop_loss_price = round(stop_loss_price * 2) / 2
                 new_order = EXCHANGE.create_order(CONF.pair, 'Stop', direction, amount, None, {'stopPx': stop_loss_price})
+            if CONF.exchange == 'kraken':
+                new_order = EXCHANGE.create_order(CONF.pair, 'stop-loss', direction, amount, stop_loss_price)
             else:
                 LOG.warning('update_stop_loss_order is not implemented for %s', CONF.exchange)
                 return
