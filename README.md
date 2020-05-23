@@ -49,20 +49,20 @@ Die beiden Dateien *maverage.py* und *osiris.sh* müssen vor dem ersten Start mi
 Um die konfigurierten Moving Average Werte berechnen zu können, benötigen die *MAverage* Instanzen aktuelle Kursdaten.
 Diese holen sie sich aus der gemeinsamen *mamaster.db*. Diese wird durch *MAmaster* mit Werten befüllt, welche im 10 Minutenintervall abgefragt werden.
 
-In der Konfigurationsdatei von *MAmaster* (*mamaster.txt*) muss ebenfalls ein API-Key hinterlegt und die abzufragende Börse eigetragen werden.
+In der Konfigurationsdatei von *MAmaster* (*mamaster.txt*) muss ebenfalls ein API-Key hinterlegt und die abzufragende Börse eingetragen werden.
 Anschliessend eine *MAmaster* Instanz innerhalb einer *tmux* Session starten:
 
 `./mamaster.py`
 
-Mit Hilfe des Watchdog-Scrpits *mamaster_hades.sh* lässt sich die zentrale *MAmaster* Instanz überwachen.
+Mit Hilfe des Watchdog-Scrpits *mamaster_osiris.sh* lässt sich die zentrale *MAmaster* Instanz überwachen.
 
-Dazu sollte der Variable *movingaverageDir* der absolute Pfad zum *mamaster.py* Script angegeben werden.
+Dazu sollte der Variable *workingDir* der absolute Pfad zum *mamaster.py* Script angegeben werden.
 
-Damit *mamaster_hades.sh* die *MAmaster*  Instanz kontinuierlich überwachen kann, muss ein entsprechender *Cronjob* eingerichtet werden:
+Damit *mamaster_osiris.sh* die *MAmaster*  Instanz kontinuierlich überwachen kann, muss ein entsprechender *Cronjob* eingerichtet werden:
 
-`*/6 *   *   *   *   /home/bot/movingaverage/mamaster_hades.sh`
+`*/6 *   *   *   *   /home/bot/movingaverage/mamaster_osiris.sh`
 
-Die beiden Dateien *mamaster.py* und *mamaster_hades.sh* müssen vor dem ersten Start mittels `chmod +x` ausführbar gemacht werden.
+Die beiden Dateien *mamaster.py* und *mamaster_osiris.sh* müssen vor dem ersten Start mittels `chmod +x` ausführbar gemacht werden.
 
 ## Unterbrechen
 
