@@ -38,7 +38,7 @@ class ExchangeConfig:
 
         try:
             props = config['config']
-            self.bot_version = '0.7.10'
+            self.bot_version = '0.7.11'
             self.exchange = str(props['exchange']).strip('"').lower()
             self.api_key = str(props['api_key']).strip('"')
             self.api_secret = str(props['api_secret']).strip('"')
@@ -83,7 +83,7 @@ class Order:
         self.id = ccxt_order['id']
         self.amount = ccxt_order['amount']
         self.side = ccxt_order['side']
-        if ccxt_order['type'] == 'stop-loss':
+        if ccxt_order['type'] in ['stop-loss', 'trailing_stop']:
             self.type = 'stop'
         else:
             self.type = ccxt_order['type']
@@ -1121,29 +1121,58 @@ def update_stop_loss_order(stop_loss_price: float, amount: float, side: str, sto
         cancel_order(pending_order)
 
     if order_status_before_cancel == 'open':
-        direction = 'Sell' if side == 'LONG' else 'Buy'
+        direction = 'sell' if side == 'LONG' else 'buy'
         if not amount:
-            return
+            return None
         try:
             if CONF.exchange == 'bitmex':
                 stop_loss_price = round(stop_loss_price * 2) / 2
-                new_order = EXCHANGE.create_order(CONF.pair, 'Stop', direction, amount, None, {'stopPx': stop_loss_price})
+                new_order = EXCHANGE.create_order(CONF.pair, 'stop', direction, amount, None, {'stopPx': stop_loss_price})
             elif CONF.exchange == 'kraken':
                 new_order = EXCHANGE.create_order(CONF.pair, 'stop-loss', direction, amount, stop_loss_price)
             else:
                 LOG.warning('update_stop_loss_order is not implemented for %s', CONF.exchange)
-                return
+                return None
             norder = Order(new_order)
             LOG.info('Created stop loss %s', str(norder))
             return norder
 
         except (ccxt.ExchangeError, ccxt.NetworkError) as error:
             if any(e in str(error.args) for e in STOP_ERRORS):
-                LOG.warning('Insufficient available balance - not selling %s', amount)
+                LOG.warning('Could not create stop %s order over %s', direction, amount)
                 return None
             LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
             sleep_for(4, 6)
             update_stop_loss_order(stop_loss_price, amount, side, stop_loss_order)
+
+
+def create_trailing_stop_loss_order(amount: float, side: str):
+    """
+    Creates a trailing stop loss order. This is a Liquid specific feature.
+    :param amount: stop loss order amount
+    :param side: position side for which the stop loss order will be created
+    :return Order: the created trailing stop loss order
+    """
+    if CONF.exchange != 'liquid':
+        LOG.warning('create_trailing_stop_loss_order is not implemented for %s', CONF.exchange)
+        return None
+
+    direction = 'sell' if side == 'LONG' else 'buy'
+    if not amount:
+        return None
+    try:
+        new_order = EXCHANGE.create_order(CONF.pair, 'trailing_stop', direction, amount, None, {'trailing_stop_type': 'percentage', 'trailing_stop_value': CONF.stop_loss_in_percent})
+        norder = Order(new_order)
+        LOG.info('Created stop loss %s', str(norder))
+        return norder
+
+    except (ccxt.ExchangeError, ccxt.NetworkError) as error:
+        if any(e in str(error.args) for e in STOP_ERRORS):
+            LOG.warning('Could not create trailing stop %s order over %s', direction, amount)
+            return None
+        LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
+        sleep_for(4, 6)
+        create_trailing_stop_loss_order(amount, side)
 
 
 def create_market_buy_order(amount_crypto: float):
@@ -1519,25 +1548,32 @@ if __name__ == '__main__':
                     SIDE = 'SHORT' if str(STATE['order'].side).capitalize().startswith('S') else 'LONG'
                     if not STATE['order'].price:
                         STATE['order'] = fix_order_price(STATE['order'])
-                    CURR_SLP = calculate_stop_loss_price(CURRENT_PRICE, STATE['order'].price, STATE['stop_loss_price'],
-                                                         SIDE)
-                    if CURR_SLP:
-                        if SIDE == 'LONG':
-                            if not STATE['stop_loss_order'] or CURR_SLP > STATE['stop_loss_price']:
-                                STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP, calculate_stop_loss_size(),
-                                                                                  SIDE, STATE['stop_loss_order'])
-                                if STATE['stop_loss_order']:
-                                    STATE['stop_loss_price'] = STATE['stop_loss_order'].price
-                                else:
-                                    STATE['stop_loss_price'] = None
-                        if SIDE == 'SHORT':
-                            if not STATE['stop_loss_order'] or CURR_SLP < STATE['stop_loss_price']:
-                                STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP, calculate_stop_loss_size(),
-                                                                                  SIDE, STATE['stop_loss_order'])
-                                if STATE['stop_loss_order']:
-                                    STATE['stop_loss_price'] = STATE['stop_loss_order'].price
-                                else:
-                                    STATE['stop_loss_price'] = None
+                    if CONF.exchange == 'liquid':
+                        if not STATE['stop_loss_order']:
+                            STATE['stop_loss_order'] = create_trailing_stop_loss_order(calculate_stop_loss_size(), SIDE)
+                    else:
+                        CURR_SLP = calculate_stop_loss_price(CURRENT_PRICE, STATE['order'].price,
+                                                             STATE['stop_loss_price'],
+                                                             SIDE)
+                        if CURR_SLP:
+                            if SIDE == 'LONG':
+                                if not STATE['stop_loss_order'] or CURR_SLP > STATE['stop_loss_price']:
+                                    STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP,
+                                                                                      calculate_stop_loss_size(),
+                                                                                      SIDE, STATE['stop_loss_order'])
+                                    if STATE['stop_loss_order']:
+                                        STATE['stop_loss_price'] = STATE['stop_loss_order'].price
+                                    else:
+                                        STATE['stop_loss_price'] = None
+                            if SIDE == 'SHORT':
+                                if not STATE['stop_loss_order'] or CURR_SLP < STATE['stop_loss_price']:
+                                    STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP,
+                                                                                      calculate_stop_loss_size(),
+                                                                                      SIDE, STATE['stop_loss_order'])
+                                    if STATE['stop_loss_order']:
+                                        STATE['stop_loss_price'] = STATE['stop_loss_order'].price
+                                    else:
+                                        STATE['stop_loss_price'] = None
 
         daily_report()
         sleep_for(110, 130)
