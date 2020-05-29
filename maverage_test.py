@@ -95,6 +95,55 @@ class MaverageTest(unittest.TestCase):
         # about 4.8% reserve
         self.assertAlmostEqual(0.0476, order_size, 5)
 
+    @patch('maverage.get_balances', return_value={'crypto': 0.1, 'fiat': 10})
+    @patch('maverage.get_current_price', return_value=10000)
+    def test_calculate_sell_order_size_50_percent_short_of_all_used_liquid(self, mock_get_balances,
+                                                                           mock_get_current_price):
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.exchange = 'liquid'
+
+        order_size = maverage.calculate_sell_order_size()
+
+        # 1% reserve
+        self.assertAlmostEqual(0.14851, order_size, 5)
+
+    @patch('maverage.get_balances', return_value={'crypto': 0, 'fiat': 1000})
+    @patch('maverage.get_current_price', return_value=10000)
+    def test_calculate_sell_order_size_50_percent_short_after_sl_liquid(self, mock_get_balances,
+                                                                        mock_get_current_price):
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.exchange = 'liquid'
+
+        order_size = maverage.calculate_sell_order_size()
+
+        # 1% reserve
+        self.assertAlmostEqual(0.04950, order_size, 5)
+
+    @patch('maverage.get_balances', return_value={'crypto': 0, 'fiat': 1000})
+    @patch('maverage.get_current_price', return_value=10000)
+    def test_calculate_sell_order_size_80_percent_short_after_sl_liquid(self, mock_get_balances,
+                                                                        mock_get_current_price):
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.exchange = 'liquid'
+        maverage.CONF.short_in_percent = 80
+
+        order_size = maverage.calculate_sell_order_size()
+
+        self.assertAlmostEqual(0.07921, order_size, 5)
+
+    @patch('maverage.get_balances', return_value={'crypto': 0.1, 'fiat': 1})
+    @patch('maverage.get_current_price', return_value=10000)
+    def test_calculate_sell_order_size_80_percent_short_coming_from_long_liquid(self, mock_get_balances,
+                                                                                mock_get_current_price):
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.exchange = 'liquid'
+        maverage.CONF.short_in_percent = 80
+
+        order_size = maverage.calculate_sell_order_size()
+
+        # 1% reserve
+        self.assertAlmostEqual(0.17822, order_size, 5)
+
     @patch('maverage.get_crypto_balance')
     @patch('maverage.get_position_info')
     def test_calculate_sell_order_size_50_percent_short_from_partial_long_bitmex(self, mock_get_position_info,
