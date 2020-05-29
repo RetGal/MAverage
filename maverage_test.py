@@ -921,7 +921,7 @@ class MaverageTest(unittest.TestCase):
         maverage.update_stop_loss_order(9999, 666, 'SHORT', stop_loss_order)
 
         mock_cancel_order.assert_called_with(stop_loss_order)
-        mock_bitmex.create_order.assert_called_with(maverage.CONF.pair, 'Stop', 'Buy', 666, None, {'stopPx': 9999.0})
+        mock_bitmex.create_order.assert_called_with(maverage.CONF.pair, 'stop', 'buy', 666, None, {'stopPx': 9999.0})
 
     @patch('maverage.fetch_order_status', return_value='closed')
     def test_poll_order_status_closed(self, mock_fetch_order_status):
