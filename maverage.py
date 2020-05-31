@@ -38,7 +38,7 @@ class ExchangeConfig:
 
         try:
             props = config['config']
-            self.bot_version = '0.7.13'
+            self.bot_version = '0.7.14'
             self.exchange = str(props['exchange']).strip('"').lower()
             self.api_key = str(props['api_key']).strip('"')
             self.api_secret = str(props['api_secret']).strip('"')
@@ -579,17 +579,12 @@ def get_balances():
         if CONF.exchange == 'liquid':
             response = EXCHANGE.private_get_trading_accounts()
             balance = {'crypto': 0, 'fiat': 0}
-            short = 0.0
             for pos in response:
                 if pos['currency_pair_code'] == CONF.base + CONF.quote:
-                    if pos['position'] != 0.0:
-                        short = pos['position']
                     if pos['funding_currency'] == CONF.base:
                         balance['crypto'] = float(pos['balance'])
                     elif pos['funding_currency'] == CONF.quote:
                         balance['fiat'] = float(pos['balance'])
-            if balance['crypto'] == 0.0 and short != 0.0:
-                balance['crypto'] = short
             return balance
         LOG.error("get_balances() not yet implemented for %s", CONF.exchange)
 
@@ -818,20 +813,19 @@ def do_buy():
     :return Order
     """
     if CONF.exchange == 'liquid':
-        bal = get_balances()
-    else:
-        bal = None
+        try:
+            EXCHANGE.private_put_trades_close_all()
+        except (ccxt.ExchangeError, ccxt.NetworkError) as error:
+            LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
+            sleep_for(4, 6)
+            do_buy()
     i = 1
     while i <= CONF.trade_trials:
         buy_price = calculate_buy_price(get_current_price())
-        order_size = calculate_buy_order_size(buy_price, bal)
+        order_size = calculate_buy_order_size(buy_price)
         if order_size is None:
             return None
-        if CONF.exchange == 'liquid':
-            funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], buy_price) > abs(bal['crypto']) else CONF.base
-            order = create_buy_order(buy_price, order_size, funding_currency)
-        else:
-            order = create_buy_order(buy_price, order_size)
+        order = create_buy_order(buy_price, order_size)
         if order is None:
             LOG.error("Could not create buy order over %s", order_size)
             return None
@@ -843,7 +837,7 @@ def do_buy():
             daily_report()
         else:
             return order
-    order_size = calculate_buy_order_size(get_current_price(), bal)
+    order_size = calculate_buy_order_size(get_current_price())
     if order_size is None:
         return None
     write_action('-BUY')
@@ -916,21 +910,16 @@ def calculate_sell_price(price: float):
     return round(price * (1 + CONF.trade_advantage_in_percent / 100), 1)
 
 
-def calculate_buy_order_size(buy_price: float, bal: dict=None):
+def calculate_buy_order_size(buy_price: float):
     """
     Calculates the buy order size. For Liquid and BitMex the short position amount needs to be taken into account.
     Minus 1% for fees.
     :param buy_price:
-    :param bal: required and used for Liquid only
     :return the calculated buy_order_size in crypto or None
     """
     if CONF.exchange == 'liquid':
-        # going long coming from short position
-        if bal['crypto'] < 0:
-            size = abs(bal['crypto']) / CONF.short_in_percent * 100
-        # going long coming from no position (after sl)
-        else:
-            size = to_crypto_amount(bal['fiat'] / 1.01, buy_price) if bal['fiat'] > abs(bal['crypto']) * buy_price else abs(bal['crypto']) / 1.01
+        bal = get_balances()
+        size = to_crypto_amount(bal['fiat'] / 1.01, buy_price) if bal['fiat'] > abs(bal['crypto']) * buy_price else abs(bal['crypto']) / 1.01
 
     elif CONF.exchange == 'bitmex':
         poi = get_position_info()
@@ -976,11 +965,12 @@ def calculate_sell_order_size():
         else:
             total = bal['crypto']
         if bal['crypto'] > 0:
-            # going short after sl
+            # going short coming from long
             size = total * (1 + CONF.short_in_percent / 100) / 1.01
         else:
-            # going short coming from long
+            # going short after sl
             size = total * (CONF.short_in_percent / 100) / 1.01
+
         return size if size > MIN_ORDER_SIZE else None
 
     total = get_crypto_balance()['total']
@@ -1132,7 +1122,7 @@ def create_buy_order(price: float, amount_crypto: float, currency: str=None):
             else:
                 new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price, {'oflags': 'fcib'})
         elif CONF.exchange == 'liquid':
-            new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price, {'funding_currency': currency})
+            new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price)
 
         norder = Order(new_order)
         LOG.info('Created %s', str(norder))
