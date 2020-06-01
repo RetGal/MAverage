@@ -64,7 +64,7 @@ def get_current_price(tries: int = 0):
     try:
         return int(EXCHANGE.fetch_ticker('BTC/USD')['bid'])
 
-    except (ccxt.ExchangeError, ccxt.AuthenticationError, ccxt.ExchangeNotAvailable, ccxt.RequestTimeout) as error:
+    except (ccxt.ExchangeError, ccxt.NetworkError) as error:
         LOG.debug('Got an error %s %s, retrying in 5 seconds...', type(error).__name__, str(error.args))
         sleep(5)
         get_current_price(tries + 1)
@@ -90,11 +90,19 @@ def persist_rate(price: int):
     now = datetime.datetime.utcnow().replace(microsecond=0)
     conn = sqlite3.connect(CONF.db_name)
     curs = conn.cursor()
-    curs.execute("INSERT INTO rates VALUES ('{}', {})".format(now, price))
+    query = "INSERT INTO rates VALUES ('{}', {})".format(now, price)
+    curs.execute(query)
     conn.commit()
     curs.close()
     conn.close()
-    LOG.info('date_time= \'%s\', price= %d', now, price)
+    LOG.info(query)
+
+
+def cleanup():
+    if NOW.day == 1 and NOW.hour == 1 and NOW.minute < 3:
+        obsolete = NOW - datetime.timedelta(weeks=CONF.max_weeks)
+        LOG.info('Purging data before %s', obsolete.replace(microsecond=0))
+        delete_rates_older_than(obsolete)
 
 
 def delete_rates_older_than(date_time: datetime):
@@ -145,10 +153,7 @@ def do_work():
     if rate is None:
         rate = get_last_rates(1)[0][0]
     persist_rate(rate)
-    if NOW.day == 1 and NOW.hour == 1 and NOW.minute < 3:
-        obsolete = NOW + datetime.timedelta(weeks=CONF.max_weeks)
-        LOG.info('Purging data before %s', obsolete.replace(microsecond=0))
-        delete_rates_older_than(obsolete)
+    cleanup()
     sleep(60)
 
 
