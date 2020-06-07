@@ -680,7 +680,6 @@ class MaverageTest(unittest.TestCase):
         maverage.EXCHANGE = mock_kraken
         maverage.LOG = mock_logging
 
-        mock_kraken.private_post_tradebalance.return_value = {'result': {'mf': 100, 'e': 150, 'm': 50}}
         maverage.get_margin_balance()
 
         mock_kraken.private_post_tradebalance.assert_called()
@@ -692,10 +691,23 @@ class MaverageTest(unittest.TestCase):
         maverage.EXCHANGE = mock_bitmex
         maverage.LOG = mock_logging
 
-        mock_bitmex.fetch_balance.return_value = {maverage.CONF.base: {'free': 100, 'total': 150}}
         maverage.get_margin_balance()
 
         mock_bitmex.fetch_balance.assert_called()
+
+    @patch('maverage.logging')
+    @patch('ccxt.liquid')
+    def test_get_margin_balance_liquid(self, mock_liquid, mock_logging):
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.base = 'BTC'
+        maverage.CONF.quote = 'USD'
+        maverage.CONF.exchange = 'liquid'
+        maverage.EXCHANGE = mock_liquid
+        maverage.LOG = mock_logging
+
+        maverage.get_margin_balance()
+
+        mock_liquid.private_get_trading_accounts.assert_called()
 
     @patch('maverage.logging')
     @mock.patch.object(ccxt.bitmex, 'cancel_order')
