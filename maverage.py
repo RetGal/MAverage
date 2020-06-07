@@ -38,7 +38,7 @@ class ExchangeConfig:
 
         try:
             props = config['config']
-            self.bot_version = '0.7.14'
+            self.bot_version = '0.7.15'
             self.exchange = str(props['exchange']).strip('"').lower()
             self.api_key = str(props['api_key']).strip('"')
             self.api_secret = str(props['api_secret']).strip('"')
@@ -372,31 +372,39 @@ def append_balances(part: dict, margin_balance: dict, wallet_balance: float, dai
     """
     Appends liquidation price, wallet balance, margin balance (including stats), used margin and leverage information
     """
-    part['mail'].append("Wallet balance {}: {:>18.4f}".format(CONF.base, wallet_balance))
-    part['csv'].append("Wallet balance {}:;{:.4f}".format(CONF.base, wallet_balance))
     price = get_current_price()
+    if not wallet_balance['crypto'] and wallet_balance['fiat']:
+        wallet_balance['crypto'] = wallet_balance['fiat'] / price
+    part['mail'].append("Wallet balance {}: {:>18.4f}".format(CONF.base, wallet_balance['crypto']))
+    part['csv'].append("Wallet balance {}:;{:.4f}".format(CONF.base, wallet_balance['crypto']))
     today = calculate_daily_statistics(margin_balance['total'], price, daily)
-    append_margin_change(part, today, CONF.base)
+    if CONF.exchange != 'liquid':
+        append_margin_change(part, today, CONF.base)
+    else:
+        append_margin_change(part, today, CONF.quote)
     append_price_change(part, today, price)
     used_margin = calculate_used_margin_percentage(margin_balance)
-    part['mail'].append("Used margin: {:>22.2f}%".format(used_margin))
+    part['mail'].append("Used margin: {:>23.2f}%".format(used_margin))
     part['csv'].append("Used margin:;{:.2f}%".format(used_margin))
     if CONF.exchange == 'kraken':
         actual_leverage = get_margin_leverage()
-        part['mail'].append("Actual leverage: {:>18.2f}%".format(actual_leverage))
+        part['mail'].append("Actual leverage: {:>19.2f}%".format(actual_leverage))
         part['csv'].append("Actual leverage:;{:.2f}%".format(used_margin))
-    elif CONF.exchange == 'liquid':
-        part['mail'].append("Actual leverage: {:>18}".format('n/a'))
-        part['csv'].append("Actual leverage:;{}".format('n/a'))
     else:
         actual_leverage = get_margin_leverage()
-        part['mail'].append("Actual leverage: {:>18.2f}x".format(actual_leverage))
+        part['mail'].append("Actual leverage: {:>19.2f}x".format(actual_leverage))
         part['csv'].append("Actual leverage:;{:.2f}x".format(actual_leverage))
     used_balance = get_used_balance()
+    if CONF.exchange == 'liquid' and not used_balance:
+        bal = get_balances()
+        used_balance = bal['crypto'] * price if bal['crypto'] * price > bal['fiat'] else bal['fiat']
     if used_balance is None:
         used_balance = 'n/a'
-    part['mail'].append("Position {}: {:>21}".format(CONF.quote, used_balance))
-    part['csv'].append("Position {}:;{}".format(CONF.quote, used_balance))
+        part['mail'].append("Position {}: {:>22}".format(CONF.quote, used_balance))
+        part['csv'].append("Position {}:;{}".format(CONF.quote, used_balance))
+    else:
+        part['mail'].append("Position {}: {:>22.2f}".format(CONF.quote, used_balance))
+        part['csv'].append("Position {}:;{:.2f}".format(CONF.quote, used_balance))
 
 
 def append_margin_change(part: dict, today: dict, currency: str):
@@ -421,16 +429,16 @@ def append_price_change(part: dict, today: dict, price: float):
     """
     Appends price changes
     """
-    rate = "{} price {}: {:>20.1f}".format(CONF.base, CONF.quote, price)
+    rate = "{} price {}: {:>21.2f}".format(CONF.base, CONF.quote, float(price))
     if 'priceChan24' in today:
         change = "{:+.2f}%".format(today['priceChan24'])
-        rate += " ("
+        rate += "   ("
         rate += change
         rate += ")*"
     else:
         change = "% n/a"
     part['mail'].append(rate)
-    part['csv'].append("{} price {}:;{:.1f};{}".format(CONF.base, CONF.quote, price, change))
+    part['csv'].append("{} price {}:;{:.2f};{}".format(CONF.base, CONF.quote, float(price), change))
 
 
 def calculate_daily_statistics(m_bal: float, price: float, update_stats: bool):
@@ -455,9 +463,9 @@ def calculate_daily_statistics(m_bal: float, price: float, update_stats: bool):
         persist_statistics()
     before_24h = STATS.get_day(int(datetime.date.today().strftime("%Y%j")) - 1)
     if before_24h is not None:
-        today['mBalChan24'] = round((today['mBal'] / before_24h['mBal'] - 1) * 100, 2)
+        today['mBalChan24'] = round((today['mBal'] / before_24h['mBal'] - 1) * 100, 2) if round(before_24h['mBal']) != 0 else 0
         if 'price' in before_24h:
-            today['priceChan24'] = round((today['price'] / before_24h['price'] - 1) * 100, 2)
+            today['priceChan24'] = round((today['price'] / before_24h['price'] - 1) * 100, 2) if round(before_24h['price']) != 0 else 0
     return today
 
 
@@ -514,7 +522,14 @@ def get_margin_balance():
             bal['total'] = float(bal['e'])
             bal['used'] = float(bal['m'])
         elif CONF.exchange == 'liquid':
-            bal = get_crypto_balance()
+            response = EXCHANGE.private_get_trading_accounts()
+            bal = {'free': 0, 'total': 0, 'used': 0}
+            for pos in response:
+                if pos['currency_pair_code'] == CONF.base + CONF.quote:
+                    if pos['leverage_level'] > 0:
+                        bal['free'] = float(pos['free_margin'])
+                        bal['total'] = float(pos['equity'])
+                        bal['used'] = float(pos['margin'])
         return bal
 
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
@@ -536,9 +551,11 @@ def get_margin_leverage():
                 return float(result['ml'])
             return 0
         if CONF.exchange == 'liquid':
-            # TODO poi = get_position_info()
-            LOG.error("get_margin_leverage() not yet implemented for %s", CONF.exchange)
-            return None
+            response = EXCHANGE.private_get_trading_accounts()
+            for pos in response:
+                if pos['currency_pair_code'] == CONF.base + CONF.quote and pos['leverage_level'] > 0:
+                    return float(pos['current_leverage_level'])
+            return 0
 
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
         LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
@@ -605,8 +622,9 @@ def get_position_info():
                 return response[0]
             return None
         if CONF.exchange == 'kraken':
-            LOG.error("get_position_info() not yet implemented for kraken")
-            return None
+            # in crypto
+            response = EXCHANGE.private_post_tradebalance({'asset': CONF.base})
+            return response['result']
         if CONF.exchange == 'liquid':
             response = EXCHANGE.private_get_trading_accounts()
             for pos in response:
@@ -631,16 +649,20 @@ def get_wallet_balance():
     """
     try:
         if CONF.exchange == 'bitmex':
-            return EXCHANGE.fetch_balance()['info'][0]['walletBalance'] * CONF.satoshi_factor
+            return {'crypto': EXCHANGE.fetch_balance()['info'][0]['walletBalance'] * CONF.satoshi_factor}
         if CONF.exchange == 'kraken':
             asset = CONF.base if CONF.base != 'BTC' else 'XBt'
-            return float(EXCHANGE.private_post_tradebalance({'asset': asset})['result']['tb'])
+            return {'crypto': float(EXCHANGE.private_post_tradebalance({'asset': asset})['result']['tb'])}
         if CONF.exchange == 'liquid':
+            balances = {'crypto': None, 'fiat': None}
             result = EXCHANGE.private_get_accounts_balance()
             if result is not None:
                 for bal in result:
+                    if bal['currency'] == CONF.quote:
+                        balances['fiat'] = float(bal['balance'])
                     if bal['currency'] == CONF.base:
-                        return float(bal['balance'])
+                        balances['crypto'] = float(bal['balance'])
+            return balances
 
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
         LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
@@ -873,19 +895,20 @@ def do_sell():
     order_size = calculate_sell_order_size()
     if order_size is None:
         return None
-    if CONF.exchange == 'liquid':
-        bal = get_balances()
-    else:
-        bal = None
+    # if CONF.exchange == 'liquid':
+    #     bal = get_balances()
+    # else:
+    #     bal = None
     i = 1
     while i <= CONF.trade_trials:
         sell_price = calculate_sell_price(get_current_price())
-        if CONF.exchange == 'liquid':
-            funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], sell_price) > bal['crypto'] else CONF.base
-            order = create_sell_order(sell_price, order_size, funding_currency)
-        else:
-            funding_currency = None
-            order = create_sell_order(sell_price, order_size)
+        # if CONF.exchange == 'liquid':
+        #     # funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], sell_price) > bal['crypto'] else CONF.base
+        #     order = create_sell_order(sell_price, order_size, funding_currency)
+        # else:
+        #     funding_currency = None
+        #     order = create_sell_order(sell_price, order_size)
+        order = create_sell_order(sell_price, order_size)
         if order is None:
             LOG.error("Could not create sell order over %s", order_size)
             return None
@@ -898,7 +921,7 @@ def do_sell():
         else:
             return order
     write_action('-SELL')
-    return create_market_sell_order(order_size, funding_currency)
+    return create_market_sell_order(order_size)
 
 
 def calculate_sell_price(price: float):
@@ -964,12 +987,14 @@ def calculate_sell_order_size():
                 total = bal['crypto']
         else:
             total = bal['crypto']
-        if bal['crypto'] > 0:
-            # going short coming from long
-            size = total * (1 + CONF.short_in_percent / 100) / 1.01
-        else:
-            # going short after sl
-            size = total * (CONF.short_in_percent / 100) / 1.01
+        # if bal['crypto'] > 0:
+        #     # going short coming from long
+        #     size = total * (1 + CONF.short_in_percent / 100) / 1.01
+        # else:
+        #     # going short after sl
+        #     size = total * (CONF.short_in_percent / 100) / 1.01
+
+        size = total * (CONF.short_in_percent / 100) / 1.01
 
         return size if size > MIN_ORDER_SIZE else None
 
@@ -1079,14 +1104,14 @@ def create_sell_order(price: float, amount_crypto: float, currency: dict=None):
             order_size = round(price * amount_crypto)
             new_order = EXCHANGE.create_limit_sell_order(CONF.pair, order_size, price)
         elif CONF.exchange == 'kraken':
-            if CONF.apply_leverage:
+            if CONF.apply_leverage and CONF.leverage_default > 1:
                 new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price,
                                                              {'leverage': CONF.leverage_default})
             else:
                 new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price)
         elif CONF.exchange == 'liquid':
             new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price,
-                                                         {'funding_currency': currency, 'leverage_level': 2})
+                                                         {'funding_currency': CONF.base, 'leverage_level': 2})
         norder = Order(new_order)
         LOG.info('Created %s', str(norder))
         return norder
@@ -1116,7 +1141,7 @@ def create_buy_order(price: float, amount_crypto: float, currency: str=None):
             order_size = round(price * amount_crypto)
             new_order = EXCHANGE.create_limit_buy_order(CONF.pair, order_size, price)
         elif CONF.exchange == 'kraken':
-            if CONF.apply_leverage:
+            if CONF.apply_leverage and CONF.leverage_default > 1:
                 new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price,
                                                             {'leverage': CONF.leverage_default, 'oflags': 'fcib'})
             else:
@@ -1148,7 +1173,7 @@ def create_market_sell_order(amount_crypto: float, currency: str=None):
     """
     try:
         if CONF.exchange == 'kraken':
-            if CONF.apply_leverage:
+            if CONF.apply_leverage and CONF.leverage_default > 1:
                 new_order = EXCHANGE.create_market_sell_order(CONF.pair, amount_crypto,
                                                               {'leverage': CONF.leverage_default})
             else:
@@ -1259,7 +1284,7 @@ def create_market_buy_order(amount_crypto: float):
             amount_fiat = round(amount_crypto * cur_price)
             new_order = EXCHANGE.create_market_buy_order(CONF.pair, amount_fiat)
         elif CONF.exchange == 'kraken':
-            if CONF.apply_leverage:
+            if CONF.apply_leverage and CONF.leverage_default > 1:
                 new_order = EXCHANGE.create_market_buy_order(CONF.pair, amount_crypto,
                                                              {'leverage': CONF.leverage_default, 'oflags': 'fcib'})
             else:
@@ -1488,6 +1513,8 @@ def calculate_stop_loss_size():
     pos = get_position_info()
     if CONF.exchange == 'bitmex':
         return abs(pos['foreignNotional']) if pos else None
+    if CONF.exchange == 'kraken':
+        return abs(float(pos['e'])) / 1.04 / 1.01 if pos else None
     if CONF.exchange == 'liquid':
         if pos['position'] != 0.0:
             return abs(pos['position'])
@@ -1603,7 +1630,7 @@ if __name__ == '__main__':
     elif CONF.exchange == 'bitmex':
         MIN_ORDER_SIZE = 0.0001
 
-    if CONF.apply_leverage:
+    if CONF.apply_leverage and CONF.exchange == 'bitmex':
         set_leverage(0)
 
     while 1:
