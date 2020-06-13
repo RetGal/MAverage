@@ -93,7 +93,7 @@ class MaverageTest(unittest.TestCase):
         order_size = maverage.calculate_sell_order_size()
 
         # about 4.8% reserve
-        self.assertAlmostEqual(0.0476, order_size, 5)
+        self.assertAlmostEqual(0.0952, order_size, 5)
 
     @patch('maverage.get_balances', return_value={'crypto': 0.1, 'fiat': 10})
     @patch('maverage.get_current_price', return_value=10000)
@@ -219,7 +219,7 @@ class MaverageTest(unittest.TestCase):
     @patch('maverage.get_crypto_balance')
     @patch('maverage.get_position_info')
     def test_calculate_sell_order_size_120_percent_short_from_partial_long_bitmex(self, mock_get_position_info,
-                                                                                 mock_get_crypto_balance):
+                                                                                  mock_get_crypto_balance):
         maverage.CONF = self.create_default_conf()
         maverage.CONF.short_in_percent = 120
         mock_get_crypto_balance.return_value = {'free': 0.1, 'used': 0, 'total': 0.1}
@@ -309,7 +309,7 @@ class MaverageTest(unittest.TestCase):
         order_size = maverage.calculate_sell_order_size()
 
         # about 4.8% reserve
-        self.assertAlmostEqual(0.0952, order_size, 4)
+        self.assertAlmostEqual(0.1904, order_size, 4)
 
     @patch('maverage.get_margin_balance')
     @patch('maverage.get_crypto_balance')
@@ -324,7 +324,7 @@ class MaverageTest(unittest.TestCase):
         order_size = maverage.calculate_sell_order_size()
 
         # about 4.8% reserve
-        self.assertAlmostEqual(0.1904, order_size, 4)
+        self.assertAlmostEqual(0.3808, order_size, 4)
 
     @patch('maverage.get_margin_balance')
     @patch('maverage.get_crypto_balance')
@@ -343,7 +343,7 @@ class MaverageTest(unittest.TestCase):
     @patch('maverage.get_crypto_balance')
     @patch('maverage.get_position_info')
     def test_calculate_buy_order_size_from_no_position_bitmex(self, mock_get_position_info,
-                                                                    mock_get_crypto_balance):
+                                                              mock_get_crypto_balance):
         maverage.CONF = self.create_default_conf()
         mock_get_crypto_balance.return_value = {'free': 0.2, 'used': 0, 'total': 0.2}
         mock_get_position_info.return_value = None
@@ -760,7 +760,28 @@ class MaverageTest(unittest.TestCase):
 
         maverage.create_sell_order(sell_price, amount_crypto)
 
-        mock_kraken.create_limit_sell_order.assert_called_with(maverage.CONF.pair, amount_crypto, sell_price)
+        mock_kraken.create_limit_sell_order.assert_called_with(maverage.CONF.pair, amount_crypto, sell_price,
+                                                               {'leverage': 2})
+
+    @patch('maverage.logging')
+    @patch('ccxt.kraken')
+    def test_create_sell_order_should_call_create_limit_sell_order_with_expected_values_leverage_3(self, mock_kraken, mock_logging):
+        sell_price = 14000
+        amount_crypto = 0.025
+        maverage.LOG = mock_logging
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.exchange = 'kraken'
+        maverage.CONF.apply_leverage = True
+        maverage.CONF.leverage_default = 3
+        maverage.EXCHANGE = mock_kraken
+        mock_kraken.create_limit_sell_order.return_value = {'id': 1, 'price': sell_price, 'amount': amount_crypto,
+                                                            'side': 'sell', 'type': 'limit',
+                                                            'datetime': str(datetime.datetime.utcnow())}
+
+        maverage.create_sell_order(sell_price, amount_crypto)
+
+        mock_kraken.create_limit_sell_order.assert_called_with(maverage.CONF.pair, amount_crypto, sell_price,
+                                                               {'leverage': 4})
 
     @patch('maverage.logging')
     @patch('ccxt.bitmex')
