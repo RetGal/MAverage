@@ -27,7 +27,7 @@ STATS = None
 EMAIL_SENT = False
 EMAIL_ONLY = False
 RESET = False
-STOP_ERRORS = ['nsufficient', 'too low', 'not_enough_free_balance', 'margin_below', 'liquidation price']
+STOP_ERRORS = ['nsufficient', 'too low', 'not_enough', 'margin_below', 'liquidation price']
 RETRY_MESSAGE = 'Got an error %s %s, retrying in about 5 seconds...'
 
 
@@ -38,7 +38,7 @@ class ExchangeConfig:
 
         try:
             props = config['config']
-            self.bot_version = '0.7.15'
+            self.bot_version = '0.7.16'
             self.exchange = str(props['exchange']).strip('"').lower()
             self.api_key = str(props['api_key']).strip('"')
             self.api_secret = str(props['api_secret']).strip('"')
@@ -463,9 +463,9 @@ def calculate_daily_statistics(m_bal: float, price: float, update_stats: bool):
         persist_statistics()
     before_24h = STATS.get_day(int(datetime.date.today().strftime("%Y%j")) - 1)
     if before_24h is not None:
-        today['mBalChan24'] = round((today['mBal'] / before_24h['mBal'] - 1) * 100, 2) if round(before_24h['mBal']) != 0 else 0
+        today['mBalChan24'] = round((today['mBal'] / before_24h['mBal'] - 1) * 100, 2) if before_24h['mBal'] != 0 else 0
         if 'price' in before_24h:
-            today['priceChan24'] = round((today['price'] / before_24h['price'] - 1) * 100, 2) if round(before_24h['price']) != 0 else 0
+            today['priceChan24'] = round((today['price'] / before_24h['price'] - 1) * 100, 2) if before_24h['price'] != 0 else 0
     return today
 
 
@@ -837,6 +837,7 @@ def do_buy():
     if CONF.exchange == 'liquid':
         try:
             EXCHANGE.private_put_trades_close_all()
+            sleep_for(4, 6)
         except (ccxt.ExchangeError, ccxt.NetworkError) as error:
             LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
             sleep_for(4, 6)
@@ -847,7 +848,12 @@ def do_buy():
         order_size = calculate_buy_order_size(buy_price)
         if order_size is None:
             return None
-        order = create_buy_order(buy_price, order_size)
+        if CONF.exchange == 'liquid':
+            bal = get_balances()
+            funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], buy_price) > abs(bal['crypto']) else CONF.base
+            order = create_buy_order(buy_price, order_size, funding_currency)
+        else:
+            order = create_buy_order(buy_price, order_size)
         if order is None:
             LOG.error("Could not create buy order over %s", order_size)
             return None
@@ -877,13 +883,17 @@ def calculate_buy_price(price: float):
 
 def poll_order_status(order_id: str, interval: int):
     order_status = 'open'
-    attempts = round(CONF.order_adjust_seconds / interval) if CONF.order_adjust_seconds > interval else 1
-    i = 0
-    while i < attempts and order_status == 'open':
-        sleep(interval-1)
-        order_status = fetch_order_status(order_id)
-        i += 1
-    return order_status
+    if CONF.exchange != 'liquid':
+        attempts = round(CONF.order_adjust_seconds / interval) if CONF.order_adjust_seconds > interval else 1
+        i = 0
+        while i < attempts and order_status == 'open':
+            sleep(interval-1)
+            order_status = fetch_order_status(order_id)
+            i += 1
+        return order_status
+    # liquid likes to return the cached status if queried repeatedly..
+    sleep_for(CONF.order_adjust_seconds, CONF.order_adjust_seconds)
+    return fetch_order_status(order_id)
 
 
 def do_sell():
@@ -895,20 +905,16 @@ def do_sell():
     order_size = calculate_sell_order_size()
     if order_size is None:
         return None
-    # if CONF.exchange == 'liquid':
-    #     bal = get_balances()
-    # else:
-    #     bal = None
+    if CONF.exchange == 'liquid':
+        bal = get_balances()
     i = 1
     while i <= CONF.trade_trials:
         sell_price = calculate_sell_price(get_current_price())
-        # if CONF.exchange == 'liquid':
-        #     # funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], sell_price) > bal['crypto'] else CONF.base
-        #     order = create_sell_order(sell_price, order_size, funding_currency)
-        # else:
-        #     funding_currency = None
-        #     order = create_sell_order(sell_price, order_size)
-        order = create_sell_order(sell_price, order_size)
+        if CONF.exchange == 'liquid':
+            funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], sell_price) > bal['crypto'] else CONF.base
+            order = create_sell_order(sell_price, order_size, funding_currency)
+        else:
+            order = create_sell_order(sell_price, order_size)
         if order is None:
             LOG.error("Could not create sell order over %s", order_size)
             return None
@@ -959,10 +965,18 @@ def calculate_buy_order_size(buy_price: float):
             size = total / 1.01
 
     elif CONF.exchange == 'kraken':
-        size = to_crypto_amount(get_fiat_balance()['total'] / 1.01, buy_price)
+        if CONF.apply_leverage:
+            total = get_fiat_balance()['total'] * CONF.leverage_default
+        else:
+            total = get_fiat_balance()['total']
+        size = to_crypto_amount(total / 1.01, buy_price)
         # no position and no fiat - so we will buy crypto with crypto
         if size == 0.0:
-            size = get_margin_balance()['free'] / 1.01
+            if CONF.apply_leverage:
+                free = get_fiat_balance()['free'] * CONF.leverage_default
+            else:
+                free = get_fiat_balance()['free']
+            size = free / 1.01
             # size = get_crypto_balance()['total'] / 1.01
         # kraken fees are a bit higher
         size /= 1.04
@@ -1000,7 +1014,12 @@ def calculate_sell_order_size():
 
     total = get_crypto_balance()['total']
     used = calculate_percentage_used()
-    if CONF.apply_leverage:
+    if CONF.exchange == 'kraken':
+        if CONF.apply_leverage and CONF.leverage_default > 1:
+            total *= (CONF.leverage_default + 1)
+        else:
+            total *= 2
+    elif CONF.apply_leverage:
         total *= CONF.leverage_default
     if CONF.exchange == 'bitmex':
         poi = get_position_info()
@@ -1106,12 +1125,17 @@ def create_sell_order(price: float, amount_crypto: float, currency: dict=None):
         elif CONF.exchange == 'kraken':
             if CONF.apply_leverage and CONF.leverage_default > 1:
                 new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price,
-                                                             {'leverage': CONF.leverage_default})
+                                                             {'leverage': CONF.leverage_default + 1})
             else:
-                new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price)
+                new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price, {'leverage': 2})
         elif CONF.exchange == 'liquid':
-            new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price,
-                                                         {'funding_currency': CONF.base, 'leverage_level': 2})
+            if CONF.apply_leverage and CONF.leverage_default > 1:
+                new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price,
+                                                             {'funding_currency': currency,
+                                                              'leverage_level': CONF.leverage_default})
+            else:
+                new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price,
+                                                             {'funding_currency': currency, 'leverage_level': 2})
         norder = Order(new_order)
         LOG.info('Created %s', str(norder))
         return norder
