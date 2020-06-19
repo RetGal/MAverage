@@ -271,7 +271,7 @@ def create_report_part_settings():
                     "Trade trials:;{}".format(CONF.trade_trials),
                     "Order adjust seconds:;{}".format(CONF.order_adjust_seconds),
                     "Trade advantage in %:;{}".format(CONF.trade_advantage_in_percent),
-                    "Leverage default:;{}x".format(str(CONF.leverage_default)),
+                    "Leverage default:;{}".format(str(CONF.leverage_default)),
                     "Apply leverage:;{}".format(str('Y' if CONF.apply_leverage is True else 'N'))]}
 
 
@@ -290,7 +290,7 @@ def create_report_part_advice():
     padding = 13 - len(str(CONF.ma_minutes_long)) - len(str(CONF.ma_minutes_short)) + len(moving_average)
     part = {'mail': [
         "Moving average {}/{}: {:>{}}".format(CONF.ma_minutes_long, CONF.ma_minutes_short, moving_average, padding)],
-        'csv': []}
+            'csv': []}
     append_mayer(part)
     return part
 
@@ -394,7 +394,7 @@ def append_balances(part: dict, margin_balance: dict, wallet_balance: float, dai
     else:
         actual_leverage = get_margin_leverage()
         part['mail'].append("Actual leverage: {:>19.2f}x".format(actual_leverage))
-        part['csv'].append("Actual leverage:;{:.2f}x".format(actual_leverage))
+        part['csv'].append("Actual leverage:;{:.2f}".format(actual_leverage))
     used_balance = get_used_balance()
     if CONF.exchange == 'liquid' and not used_balance:
         bal = get_balances()
