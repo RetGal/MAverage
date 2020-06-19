@@ -38,7 +38,7 @@ class ExchangeConfig:
 
         try:
             props = config['config']
-            self.bot_version = '0.7.16'
+            self.bot_version = '0.7.17'
             self.exchange = str(props['exchange']).strip('"').lower()
             self.api_key = str(props['api_key']).strip('"')
             self.api_secret = str(props['api_secret']).strip('"')
@@ -79,22 +79,23 @@ class Order:
     """
     __slots__ = 'id', 'price', 'amount', 'side', 'type', 'datetime'
 
-    def __init__(self, ccxt_order):
-        self.id = ccxt_order['id']
-        self.amount = ccxt_order['amount']
-        self.side = ccxt_order['side']
-        if ccxt_order['type'] in ['stop-loss', 'trailing_stop']:
-            self.type = 'stop'
-        else:
-            self.type = ccxt_order['type']
-        if self.type == 'stop':
-            if 'info' in ccxt_order and 'stopPx' in ccxt_order['info']:
-                self.price = ccxt_order['info']['stopPx']
+    def __init__(self, ccxt_order=None):
+        if ccxt_order:
+            self.id = ccxt_order['id']
+            self.amount = ccxt_order['amount']
+            self.side = ccxt_order['side'].lower()
+            if ccxt_order['type'] in ['stop-loss', 'trailing_stop']:
+                self.type = 'stop'
+            else:
+                self.type = ccxt_order['type']
+            if self.type == 'stop':
+                if 'info' in ccxt_order and 'stopPx' in ccxt_order['info']:
+                    self.price = ccxt_order['info']['stopPx']
+                else:
+                    self.price = ccxt_order['price']
             else:
                 self.price = ccxt_order['price']
-        else:
-            self.price = ccxt_order['price']
-        self.datetime = ccxt_order['datetime']
+            self.datetime = ccxt_order['datetime']
 
     def __str__(self):
         return "{} {} order id: {}, price: {}, amount: {}, created: {}".format(self.type, self.side, self.id,
@@ -629,11 +630,11 @@ def get_position_info():
             response = EXCHANGE.private_get_trading_accounts()
             for pos in response:
                 if pos['currency_pair_code'] == CONF.base + CONF.quote:
-                    # short position
+                    # position
                     if pos['position'] != 0.0:
                         return pos
-                    # long (no position)
-                    if float(pos['balance']) != 0.0:
+                    # no position
+                    if float(pos['balance']) > 0.000001:
                         return pos
             return None
 
@@ -668,6 +669,34 @@ def get_wallet_balance():
         LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
         sleep_for(4, 6)
         get_wallet_balance()
+
+
+def get_open_trades():
+    try:
+        return EXCHANGE.private_get_trades({'status': 'open'})['models']
+
+    except (ccxt.ExchangeError, ccxt.NetworkError) as error:
+        LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
+        sleep_for(4, 6)
+        get_open_trades()
+
+
+def get_open_trade(currency_pair: str):
+    trades = get_open_trades()
+    for trade in trades:
+        if trade['currency_pair_code'] == currency_pair:
+            return trade
+    return None
+
+
+def update_stop_loss_trade(trade_id: str, stop_loss_price: float):
+    try:
+        EXCHANGE.private_put_trades_id({'id': trade_id, 'stop_loss': stop_loss_price})
+
+    except (ccxt.ExchangeError, ccxt.NetworkError) as error:
+        LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
+        sleep_for(4, 6)
+        update_stop_loss_trade(trade_id, stop_loss_price)
 
 
 def get_open_order():
@@ -848,18 +877,19 @@ def do_buy():
         order_size = calculate_buy_order_size(buy_price)
         if order_size is None:
             return None
-        if CONF.exchange == 'liquid':
+        if CONF.exchange == 'liquid' and CONF.apply_leverage and CONF.leverage_default > 1:
             bal = get_balances()
             funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], buy_price) > abs(bal['crypto']) else CONF.base
             order = create_buy_order(buy_price, order_size, funding_currency)
         else:
+            funding_currency = None
             order = create_buy_order(buy_price, order_size)
         if order is None:
             LOG.error("Could not create buy order over %s", order_size)
             return None
         write_action('-BUY')
         order_status = poll_order_status(order.id, 10)
-        if order_status == 'open':
+        if order_status in ['open', 'live']:
             cancel_order(order)
             i += 1
             daily_report()
@@ -869,7 +899,7 @@ def do_buy():
     if order_size is None:
         return None
     write_action('-BUY')
-    return create_market_buy_order(order_size)
+    return create_market_buy_order(order_size, funding_currency)
 
 
 def calculate_buy_price(price: float):
@@ -902,6 +932,14 @@ def do_sell():
     within the configured trade attempts
     :return Order
     """
+    if CONF.exchange == 'liquid' and CONF.apply_leverage and CONF.leverage_default > 1:
+        try:
+            EXCHANGE.private_put_trades_close_all()
+            sleep_for(4, 6)
+        except (ccxt.ExchangeError, ccxt.NetworkError) as error:
+            LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
+            sleep_for(4, 6)
+            do_sell()
     order_size = calculate_sell_order_size()
     if order_size is None:
         return None
@@ -914,20 +952,21 @@ def do_sell():
             funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], sell_price) > bal['crypto'] else CONF.base
             order = create_sell_order(sell_price, order_size, funding_currency)
         else:
+            funding_currency = None
             order = create_sell_order(sell_price, order_size)
         if order is None:
             LOG.error("Could not create sell order over %s", order_size)
             return None
         write_action('-SELL')
         order_status = poll_order_status(order.id, 10)
-        if order_status == 'open':
+        if order_status in ['open', 'live']:
             cancel_order(order)
             i += 1
             daily_report()
         else:
             return order
     write_action('-SELL')
-    return create_market_sell_order(order_size)
+    return create_market_sell_order(order_size, funding_currency)
 
 
 def calculate_sell_price(price: float):
@@ -992,24 +1031,15 @@ def calculate_sell_order_size():
     :return the calculated sell_order_size or None
     """
     if CONF.exchange == 'liquid':
+        total = None
         bal = get_balances()
         if bal['fiat'] > 0:
             price = get_current_price()
             if to_crypto_amount(bal['fiat'], price) > bal['crypto']:
                 total = to_crypto_amount(bal['fiat'], price)
-            else:
-                total = bal['crypto']
-        else:
+        if not total:
             total = bal['crypto']
-        # if bal['crypto'] > 0:
-        #     # going short coming from long
-        #     size = total * (1 + CONF.short_in_percent / 100) / 1.01
-        # else:
-        #     # going short after sl
-        #     size = total * (CONF.short_in_percent / 100) / 1.01
-
         size = total * (CONF.short_in_percent / 100) / 1.01
-
         return size if size > MIN_ORDER_SIZE else None
 
     total = get_crypto_balance()['total']
@@ -1072,15 +1102,26 @@ def fetch_order_status(order_id: str):
     """
     Fetches the status of an order
     :param order_id: id of an order
-    :return status of the order (open, closed)
+    :return status of the order (open, closed, not found)
     """
     try:
         return EXCHANGE.fetch_order_status(order_id)
-
+    except ccxt.OrderNotFound:
+        return 'not found'
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
         LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
         sleep_for(4, 6)
         fetch_order_status(order_id)
+
+
+def fetch_trade_status():
+    try:
+        trades = EXCHANGE.private_get_trades({'status': 'open'})['models']
+        return 'open' if len(trades) > 0 else 'closed'
+    except (ccxt.ExchangeError, ccxt.NetworkError) as error:
+        LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
+        sleep_for(4, 6)
+        fetch_trade_status()
 
 
 def cancel_order(order: Order):
@@ -1090,15 +1131,18 @@ def cancel_order(order: Order):
     try:
         if order is not None:
             status = EXCHANGE.fetch_order_status(order.id)
-            if status.lower() == 'open':
+            if not status:
+                LOG.warning('Order to be canceled not found %s', str(order))
+                return 'not found'
+            if status in ['open', 'live']:
                 EXCHANGE.cancel_order(order.id)
                 LOG.info('Canceled %s', str(order))
-                return status.lower()
-            if status.lower() in ['closed', 'filled']:
+                return status
+            if status in ['closed', 'filled']:
                 LOG.warning('Order to be canceled %s was in state %s', str(order), status)
             else:
                 LOG.error('Order to be canceled %s was in state %s', str(order), status)
-            return status.lower()
+            return status
 
     except ccxt.OrderNotFound as error:
         LOG.warning('Order to be canceled not found %s %s', str(order), str(error.args))
@@ -1109,7 +1153,7 @@ def cancel_order(order: Order):
         cancel_order(order)
 
 
-def create_sell_order(price: float, amount_crypto: float, currency: dict=None):
+def create_sell_order(price: float, amount_crypto: float, currency: dict = None):
     """
     Creates a sell order
     :param price: float price in fiat
@@ -1129,6 +1173,7 @@ def create_sell_order(price: float, amount_crypto: float, currency: dict=None):
             else:
                 new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price, {'leverage': 2})
         elif CONF.exchange == 'liquid':
+            # Valid levels: 2, 4, 5, 10, 25.
             if CONF.apply_leverage and CONF.leverage_default > 1:
                 new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price,
                                                              {'funding_currency': currency,
@@ -1152,7 +1197,7 @@ def create_sell_order(price: float, amount_crypto: float, currency: dict=None):
         create_sell_order(price, amount_crypto, currency)
 
 
-def create_buy_order(price: float, amount_crypto: float, currency: str=None):
+def create_buy_order(price: float, amount_crypto: float, currency: str = None):
     """
     Creates a buy order
     :param price: float current price of crypto
@@ -1171,7 +1216,13 @@ def create_buy_order(price: float, amount_crypto: float, currency: str=None):
             else:
                 new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price, {'oflags': 'fcib'})
         elif CONF.exchange == 'liquid':
-            new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price)
+            # Valid levels: 2, 4, 5, 10, 25.
+            if CONF.apply_leverage and CONF.leverage_default > 1:
+                new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price,
+                                                            {'funding_currency': currency,
+                                                             'leverage_level': CONF.leverage_default})
+            else:
+                new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price)
 
         norder = Order(new_order)
         LOG.info('Created %s', str(norder))
@@ -1189,7 +1240,7 @@ def create_buy_order(price: float, amount_crypto: float, currency: str=None):
         create_buy_order(price, amount_crypto, currency)
 
 
-def create_market_sell_order(amount_crypto: float, currency: str=None):
+def create_market_sell_order(amount_crypto: float, currency: str = None):
     """
     Creates a market sell order
     :param amount_crypto to be sold
@@ -1230,6 +1281,27 @@ def update_stop_loss_order(stop_loss_price: float, amount: float, side: str, sto
     :param stop_loss_order: the existing stop loss order (optional)
     :return Order: the transmitted new stop loss order
     """
+    if CONF.exchange == 'liquid':
+        direction = 'sell' if side == 'LONG' else 'buy'
+        if stop_loss_order and stop_loss_order.id:
+            update_stop_loss_trade(stop_loss_order.id, stop_loss_price)
+            stop_loss_order.price = stop_loss_price
+            LOG.info('Updated stop loss {} order {:.2f}'.format(direction, stop_loss_price))
+            return stop_loss_order
+
+        trade = get_open_trade(CONF.base + CONF.quote)
+        if trade:
+            tid = trade['id']
+            update_stop_loss_trade(tid, stop_loss_price)
+            norder = Order()
+            norder.id = tid
+            norder.type = 'stop'
+            norder.price = stop_loss_price
+            norder.side = direction
+            norder.datetime = str(datetime.datetime.utcnow().replace(microsecond=0))
+            LOG.info('Created stop loss {} order {:.2f}'.format(direction, stop_loss_price))
+            return norder
+
     order_status_before_cancel = 'open'
     if stop_loss_order:
         order_status_before_cancel = cancel_order(stop_loss_order)
@@ -1249,9 +1321,6 @@ def update_stop_loss_order(stop_loss_price: float, amount: float, side: str, sto
                 new_order = EXCHANGE.create_order(CONF.pair, 'stop', direction, amount, None, {'stopPx': stop_loss_price})
             elif CONF.exchange == 'kraken':
                 new_order = EXCHANGE.create_order(CONF.pair, 'stop-loss', direction, amount, stop_loss_price)
-            else:
-                LOG.warning('update_stop_loss_order is not implemented for %s', CONF.exchange)
-                return None
             norder = Order(new_order)
             LOG.info('Created stop loss %s', str(norder))
             return norder
@@ -1265,41 +1334,11 @@ def update_stop_loss_order(stop_loss_price: float, amount: float, side: str, sto
             update_stop_loss_order(stop_loss_price, amount, side, stop_loss_order)
 
 
-def create_trailing_stop_loss_order(amount: float, side: str):
-    """
-    Creates a trailing stop loss order. This is a Liquid specific feature.
-    :param amount: stop loss order amount
-    :param side: position side for which the stop loss order will be created
-    :return Order: the created trailing stop loss order
-    """
-    if CONF.exchange != 'liquid':
-        LOG.warning('create_trailing_stop_loss_order is not implemented for %s', CONF.exchange)
-        return None
-
-    direction = 'sell' if side == 'LONG' else 'buy'
-    if not amount:
-        return None
-    try:
-        new_order = EXCHANGE.create_order(CONF.pair, 'trailing_stop', direction, amount, None,
-                                          {'trailing_stop_type': 'percentage',
-                                           'trailing_stop_value': CONF.stop_loss_in_percent})
-        norder = Order(new_order)
-        LOG.info('Created trailing stop %s', str(norder))
-        return norder
-
-    except (ccxt.ExchangeError, ccxt.NetworkError) as error:
-        if any(e in str(error.args) for e in STOP_ERRORS):
-            LOG.warning('Could not create trailing stop %s order over %s', direction, amount)
-            return None
-        LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
-        sleep_for(4, 6)
-        create_trailing_stop_loss_order(amount, side)
-
-
-def create_market_buy_order(amount_crypto: float):
+def create_market_buy_order(amount_crypto: float, currency: str = None):
     """
     Creates a market buy order
     :param amount_crypto to be bought
+    :param currency: the funding currency required for Liquid only
     :return Order: the transmitted order
     """
     try:
@@ -1314,7 +1353,13 @@ def create_market_buy_order(amount_crypto: float):
             else:
                 new_order = EXCHANGE.create_market_buy_order(CONF.pair, amount_crypto, {'oflags': 'fcib'})
         elif CONF.exchange == 'liquid':
-            new_order = EXCHANGE.create_market_buy_order(CONF.pair, amount_crypto)
+            if CONF.apply_leverage and CONF.leverage_default > 1:
+                new_order = EXCHANGE.create_market_buy_order(CONF.pair, amount_crypto,
+                                                             {'funding_currency': currency,
+                                                              'leverage_level': CONF.leverage_default})
+            else:
+                new_order = EXCHANGE.create_market_buy_order(CONF.pair, amount_crypto)
+
         norder = Order(new_order)
         LOG.info('Created market %s', str(norder))
         return norder
@@ -1325,7 +1370,7 @@ def create_market_buy_order(amount_crypto: float):
             return None
         LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
         sleep_for(4, 6)
-        create_market_buy_order(amount_crypto)
+        create_market_buy_order(amount_crypto, currency)
 
 
 def get_position_balance():
@@ -1358,9 +1403,8 @@ def get_position_side():
         fiat = get_fiat_balance()['total']
         return 'LONG' if crypto * price > fiat else 'SHORT'
     if CONF.exchange == 'liquid':
-        bal = get_balances()
-        return 'LONG' if bal['crypto'] > 0 else 'SHORT'
-    LOG.error('get_position_side() not yet implemented for %s', CONF.exchange)
+        pos = get_position_info()
+        return 'LONG' if pos['position'] > 0 else 'SHORT'
 
 
 def get_used_balance():
@@ -1532,6 +1576,8 @@ def do_post_stop_loss_action():
 
 
 def calculate_stop_loss_size():
+    if CONF.exchange == 'liquid':
+        return None
     if STATE['stop_loss_order']:
         return STATE['stop_loss_order'].amount
     pos = get_position_info()
@@ -1539,10 +1585,6 @@ def calculate_stop_loss_size():
         return abs(pos['foreignNotional']) if pos else None
     if CONF.exchange == 'kraken':
         return abs(float(pos['e'])) / 1.04 / 1.01 if pos else None
-    if CONF.exchange == 'liquid':
-        if pos['position'] != 0.0:
-            return abs(pos['position'])
-        return abs(float(pos['balance'])) if pos else None
 
 
 def fix_order_price(order: Order):
@@ -1609,6 +1651,18 @@ def init():
     order = get_closed_order()
     if order and order.type != 'stop':
         state['order'] = order
+        if CONF.exchange == 'liquid':
+            trade = get_open_trade(CONF.base + CONF.quote)
+            if trade and trade['stop_loss']:
+                sorder = Order()
+                sorder.id = trade['id']
+                sorder.type = 'stop'
+                sorder.amount = order.amount
+                sorder.price = float(trade['stop_loss'])
+                sorder.side = 'sell' if order.side == 'buy' else 'buy'
+                sorder.datetime = order.datetime
+                state['stop_loss_order'] = sorder
+                state['stop_loss_price'] = sorder.price
     return state
 
 
@@ -1671,42 +1725,38 @@ if __name__ == '__main__':
             CURRENT_PRICE = get_current_price()
             if CURRENT_PRICE and CURRENT_PRICE > 0:
                 if STATE['stop_loss_order'] is not None:
-                    STOP_LOSS_ORDER_STATUS = fetch_order_status(STATE['stop_loss_order'].id)
-                    if STOP_LOSS_ORDER_STATUS.lower() in ['closed', 'filled']:
+                    if CONF.exchange == 'liquid':
+                        STOP_LOSS_ORDER_STATUS = fetch_trade_status()
+                    else:
+                        STOP_LOSS_ORDER_STATUS = fetch_order_status(STATE['stop_loss_order'].id)
+                    if STOP_LOSS_ORDER_STATUS in ['closed', 'filled']:
                         do_post_stop_loss_action()
                 if STATE['order'] is not None:
-                    SIDE = 'SHORT' if str(STATE['order'].side).capitalize().startswith('S') else 'LONG'
+                    SIDE = 'SHORT' if str(STATE['order'].side).startswith('s') else 'LONG'
                     if not STATE['order'].price:
                         STATE['order'] = fix_order_price(STATE['order'])
-                    if CONF.exchange == 'liquid':
-                        if not STATE['stop_loss_order']:
-                            # returns None if no_action_at_loss is active and price above/below order price
-                            if calculate_stop_loss_price(CURRENT_PRICE, STATE['order'].price, None, SIDE):
-                                STATE['stop_loss_order'] = create_trailing_stop_loss_order(calculate_stop_loss_size(),
-                                                                                           SIDE)
-                    else:
-                        CURR_SLP = calculate_stop_loss_price(CURRENT_PRICE, STATE['order'].price,
-                                                             STATE['stop_loss_price'],
-                                                             SIDE)
-                        if CURR_SLP:
-                            if SIDE == 'LONG':
-                                if not STATE['stop_loss_order'] or CURR_SLP > STATE['stop_loss_price']:
-                                    STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP,
-                                                                                      calculate_stop_loss_size(),
-                                                                                      SIDE, STATE['stop_loss_order'])
-                                    if STATE['stop_loss_order']:
-                                        STATE['stop_loss_price'] = STATE['stop_loss_order'].price
-                                    else:
-                                        STATE['stop_loss_price'] = None
-                            if SIDE == 'SHORT':
-                                if not STATE['stop_loss_order'] or CURR_SLP < STATE['stop_loss_price']:
-                                    STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP,
-                                                                                      calculate_stop_loss_size(),
-                                                                                      SIDE, STATE['stop_loss_order'])
-                                    if STATE['stop_loss_order']:
-                                        STATE['stop_loss_price'] = STATE['stop_loss_order'].price
-                                    else:
-                                        STATE['stop_loss_price'] = None
+
+                    CURR_SLP = calculate_stop_loss_price(CURRENT_PRICE, STATE['order'].price, STATE['stop_loss_price'],
+                                                         SIDE)
+                    if CURR_SLP:
+                        if SIDE == 'LONG':
+                            if not STATE['stop_loss_order'] or CURR_SLP > STATE['stop_loss_price']:
+                                STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP,
+                                                                                  calculate_stop_loss_size(),
+                                                                                  SIDE, STATE['stop_loss_order'])
+                                if STATE['stop_loss_order']:
+                                    STATE['stop_loss_price'] = STATE['stop_loss_order'].price
+                                else:
+                                    STATE['stop_loss_price'] = None
+                        if SIDE == 'SHORT':
+                            if not STATE['stop_loss_order'] or CURR_SLP < STATE['stop_loss_price']:
+                                STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP,
+                                                                                  calculate_stop_loss_size(),
+                                                                                  SIDE, STATE['stop_loss_order'])
+                                if STATE['stop_loss_order']:
+                                    STATE['stop_loss_price'] = STATE['stop_loss_order'].price
+                                else:
+                                    STATE['stop_loss_price'] = None
 
         daily_report()
         sleep_for(110, 130)

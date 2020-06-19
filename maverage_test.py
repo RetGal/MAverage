@@ -606,6 +606,7 @@ class MaverageTest(unittest.TestCase):
                                  mock_create_report_part_performance, mock_create_report_part_advice,
                                  mock_create_report_part_trade):
         maverage.CONF = self.create_default_conf()
+        maverage.STATE = {'last_action': None, 'order': None, 'stop_loss_order': None, 'stop_loss_price': None}
 
         maverage.create_mail_content()
 
@@ -816,26 +817,6 @@ class MaverageTest(unittest.TestCase):
 
         mock_kraken.create_limit_buy_order.assert_called_with(maverage.CONF.pair, amount_crypto, buy_price, {'oflags': 'fcib'})
 
-    @patch('maverage.logging')
-    @patch('ccxt.liquid')
-    def test_create_trailing_stop_order_should_call_create_trailing_stop_order_with_expected_values(self, mock_liquid, mock_logging):
-        amount_crypto = 0.03
-        maverage.LOG = mock_logging
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.exchange = 'liquid'
-        maverage.EXCHANGE = mock_liquid
-        mock_liquid.create_order.return_value = {'id': 1, 'price': 12345, 'amount': amount_crypto,
-                                                 'side': 'sell',  'type': 'trailing_stop',
-                                                 'datetime': str(datetime.datetime.utcnow())}
-
-        order = maverage.create_trailing_stop_loss_order(amount_crypto, 'LONG')
-
-        mock_liquid.create_order.assert_called_with(maverage.CONF.pair, 'trailing_stop', 'sell', amount_crypto, None,
-                                                    {'trailing_stop_type': 'percentage',
-                                                     'trailing_stop_value': maverage.CONF.stop_loss_in_percent})
-        self.assertEqual('stop', order.type)
-        self.assertEqual(12345, order.price)
-
     def test_calculate_stop_loss_price_short_from_order_price(self):
         maverage.CONF = self.create_default_conf()
         maverage.CONF.no_action_at_loss = False
@@ -930,6 +911,20 @@ class MaverageTest(unittest.TestCase):
         stop_loss_price = maverage.calculate_stop_loss_price(10000, order_price, stop_loss_price, 'LONG')
 
         self.assertEqual(10600, stop_loss_price)
+
+    def test_calculate_stop_loss_size_for_liquid(self):
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.exchange = 'liquid'
+
+        self.assertIsNone(maverage.calculate_stop_loss_size())
+
+    def test_calculate_stop_loss_size_for_existing(self):
+        maverage.CONF = self.create_default_conf()
+        sl_order = maverage.Order()
+        sl_order.amount = 100
+        maverage.STATE = {'stop_loss_order': sl_order}
+
+        self.assertEqual(sl_order.amount, maverage.calculate_stop_loss_size())
 
     @patch('maverage.fetch_mayer', return_value={'current': 1, 'average': 1.5})
     def test_print_mayer_buy(self, mock_fetch_mayer):
