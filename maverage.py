@@ -1138,7 +1138,7 @@ def cancel_order(order: Order):
                 EXCHANGE.cancel_order(order.id)
                 LOG.info('Canceled %s', str(order))
                 return status
-            if status in ['closed', 'filled']:
+            if status in ['closed', 'canceled', 'filled']:
                 LOG.warning('Order to be canceled %s was in state %s', str(order), status)
             else:
                 LOG.error('Order to be canceled %s was in state %s', str(order), status)
