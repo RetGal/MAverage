@@ -1153,6 +1153,14 @@ def cancel_order(order: Order):
         cancel_order(order)
 
 
+def get_liquid_leverage_level():
+    if CONF.leverage_default < 2:
+        return None
+    if CONF.leverage_default in [2, 4, 5, 10, 25]:
+        return CONF.leverage_default
+    return 2
+
+
 def create_sell_order(price: float, amount_crypto: float, currency: dict = None):
     """
     Creates a sell order
@@ -1173,11 +1181,11 @@ def create_sell_order(price: float, amount_crypto: float, currency: dict = None)
             else:
                 new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price, {'leverage': 2})
         elif CONF.exchange == 'liquid':
-            # Valid levels: 2, 4, 5, 10, 25.
-            if CONF.apply_leverage and CONF.leverage_default > 1:
+            leverage_level = get_liquid_leverage_level()
+            if CONF.apply_leverage and leverage_level:
                 new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price,
                                                              {'funding_currency': currency,
-                                                              'leverage_level': CONF.leverage_default})
+                                                              'leverage_level': leverage_level})
             else:
                 new_order = EXCHANGE.create_limit_sell_order(CONF.pair, amount_crypto, price,
                                                              {'funding_currency': currency, 'leverage_level': 2})
@@ -1216,11 +1224,11 @@ def create_buy_order(price: float, amount_crypto: float, currency: str = None):
             else:
                 new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price, {'oflags': 'fcib'})
         elif CONF.exchange == 'liquid':
-            # Valid levels: 2, 4, 5, 10, 25.
-            if CONF.apply_leverage and CONF.leverage_default > 1:
+            leverage_level = get_liquid_leverage_level()
+            if CONF.apply_leverage and leverage_level:
                 new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price,
                                                             {'funding_currency': currency,
-                                                             'leverage_level': CONF.leverage_default})
+                                                             'leverage_level': leverage_level})
             else:
                 new_order = EXCHANGE.create_limit_buy_order(CONF.pair, amount_crypto, price)
 

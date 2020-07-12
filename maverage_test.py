@@ -937,6 +937,22 @@ class MaverageTest(unittest.TestCase):
 
         mock_update_stop_loss_trade.assert_called_with(sl_order.id, 100)
 
+    def test_get_liquid_leverage_level_invalid(self):
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.leverage_default = 3
+
+        leverage = maverage.get_liquid_leverage_level()
+
+        self.assertEqual(2, leverage)
+
+    def test_get_liquid_leverage_level_valid(self):
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.leverage_default = 4
+
+        leverage = maverage.get_liquid_leverage_level()
+
+        self.assertEqual(4, leverage)
+
     @patch('maverage.fetch_mayer', return_value={'current': 1, 'average': 1.5})
     def test_print_mayer_buy(self, mock_fetch_mayer):
         advice = maverage.print_mayer()
