@@ -724,13 +724,13 @@ class MaverageTest(unittest.TestCase):
         order2 = maverage.Order({'side': 'buy', 'id': 'b2c', 'price': 9000, 'amount': 90, 'type': 'limit',
                                  'datetime': datetime.datetime.today().isoformat()})
 
-        return_values = {'s1o': 'open', 'b2c': 'Filled'}
+        return_values = {'s1o': 'open', 'b2c': 'filled'}
         mock_fetch_order_status.side_effect = return_values.get
         maverage.cancel_order(order1)
         mock_cancel_order.assert_called()
 
         maverage.cancel_order(order2)
-        mock_logging.warning.assert_called_with('Order to be canceled %s was in state %s', str(order2), 'Filled')
+        mock_logging.warning.assert_called_with('Order to be canceled %s was in state %s', str(order2), 'filled')
 
     def test_calculate_buy_price(self):
         maverage.CONF = self.create_default_conf()
@@ -1035,6 +1035,7 @@ class MaverageTest(unittest.TestCase):
         conf.trade_report = False
         conf.re_open = False
         conf.info = ''
+        conf.url = 'http://example.org'
         conf.mail_server = 'smtp.example.org'
         conf.sender_address = 'test@example.org'
         conf.recipient_addresses = ''
