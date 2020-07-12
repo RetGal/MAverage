@@ -69,6 +69,7 @@ class ExchangeConfig:
             self.sender_password = str(props['sender_password']).strip('"')
             self.mail_server = str(props['mail_server']).strip('"')
             self.info = str(props['info']).strip('"')
+            self.url = 'https://bitcoin-schweiz.ch/bot/'
         except (configparser.NoSectionError, KeyError):
             raise SystemExit('Invalid configuration for ' + INSTANCE)
 
@@ -215,7 +216,7 @@ def create_mail_content(daily: bool = False):
     :return dict: text: str
     """
     if not daily:
-        order = STATE['order'] if STATE['order'] else get_closed_order()
+        order = STATE['order'] if STATE['order'] else STATE['stop_loss_order']
         trade_part = create_report_part_trade(order)
     performance_part = create_report_part_performance(daily)
     advice_part = create_report_part_advice()
@@ -230,14 +231,13 @@ def create_mail_content(daily: bool = False):
     settings = ["Your settings", "-------------", '\n'.join(settings_part['mail']), '\n\n']
     general = ["General", "-------", '\n'.join(general_part), '\n\n']
 
-    bcs_url = 'https://bitcoin-schweiz.ch/bot/'
     text = '' if daily else '\n'.join(trade)
 
     if not CONF.info:
-        text += '\n'.join(performance) + '\n'.join(advice) + '\n'.join(settings) + '\n'.join(general) + bcs_url + '\n'
+        text += '\n'.join(performance) + '\n'.join(advice) + '\n'.join(settings) + '\n'.join(general) + CONF.url + '\n'
     else:
         text += '\n'.join(performance) + '\n'.join(advice) + '\n'.join(settings) + '\n'.join(general) + CONF.info \
-                + '\n\n' + bcs_url + '\n'
+                + '\n\n' + CONF.url + '\n'
 
     csv = None if not daily else INSTANCE + ';' + str(datetime.datetime.utcnow().replace(microsecond=0)) + ' UTC;' + \
                                  (';'.join(performance_part['csv']) + ';' + ';'.join(advice_part['csv']) + ';' +
@@ -1569,10 +1569,10 @@ def do_post_stop_loss_action():
     global STATE
 
     LOG.info('Filled %s', str(STATE['stop_loss_order']))
+    trade_report('SL')
     STATE['order'] = None
     STATE['stop_loss_order'] = None
     STATE['stop_loss_price'] = None
-    trade_report('SL')
 
 
 def calculate_stop_loss_size():
