@@ -926,6 +926,17 @@ class MaverageTest(unittest.TestCase):
 
         self.assertEqual(sl_order.amount, maverage.calculate_stop_loss_size())
 
+    @patch('maverage.update_stop_loss_trade')
+    def test_update_stop_loss_order(self, mock_update_stop_loss_trade):
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.exchange = 'liquid'
+        sl_order = maverage.Order()
+        sl_order.id = '123'
+
+        maverage.update_stop_loss_order(100, 'LONG', sl_order)
+
+        mock_update_stop_loss_trade.assert_called_with(sl_order.id, 100)
+
     @patch('maverage.fetch_mayer', return_value={'current': 1, 'average': 1.5})
     def test_print_mayer_buy(self, mock_fetch_mayer):
         advice = maverage.print_mayer()
