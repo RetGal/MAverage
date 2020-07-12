@@ -937,6 +937,14 @@ class MaverageTest(unittest.TestCase):
 
         mock_update_stop_loss_trade.assert_called_with(sl_order.id, 100)
 
+    def test_get_liquid_leverage_level_too_low(self):
+        maverage.CONF = self.create_default_conf()
+        maverage.CONF.leverage_default = 1
+
+        leverage = maverage.get_liquid_leverage_level()
+
+        self.assertIsNone(leverage)
+
     def test_get_liquid_leverage_level_invalid(self):
         maverage.CONF = self.create_default_conf()
         maverage.CONF.leverage_default = 3
