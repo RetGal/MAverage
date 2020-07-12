@@ -38,7 +38,7 @@ class ExchangeConfig:
 
         try:
             props = config['config']
-            self.bot_version = '0.7.17'
+            self.bot_version = '0.7.18'
             self.exchange = str(props['exchange']).strip('"').lower()
             self.api_key = str(props['api_key']).strip('"')
             self.api_secret = str(props['api_secret']).strip('"')
@@ -334,11 +334,11 @@ def send_mail(subject: str, text: str, attachment: str = None):
         part.add_header('Content-Disposition', "attachment; filename={}".format(attachment))
         msg.attach(part)
 
-    server = smtplib.SMTP(CONF.mail_server, 587)
-    server.starttls()
+    server = smtplib.SMTP_SSL(CONF.mail_server, 465)
+    # server.starttls()
     server.set_debuglevel(0)
     server.login(CONF.sender_address, CONF.sender_password)
-    server.send_message(msg)
+    server.send_message(msg, from_addr=CONF.sender_address, to_addrs=recipients, mail_options=(), rcpt_options=())
     server.quit()
     LOG.info("Sent email to %s", recipients)
 
