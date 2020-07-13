@@ -1,6 +1,7 @@
 # MAverage
 
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=RetGal_MAverage&metric=alert_status)](https://sonarcloud.io/dashboard?id=RetGal_MAverage)
+![Python application](https://github.com/RetGal/MAverage/workflows/Python%20application/badge.svg)
 
 ## Voraussetzungen
 
