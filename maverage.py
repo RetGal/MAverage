@@ -38,7 +38,7 @@ class ExchangeConfig:
 
         try:
             props = config['config']
-            self.bot_version = '0.7.18'
+            self.bot_version = '0.7.19'
             self.exchange = str(props['exchange']).strip('"').lower()
             self.api_key = str(props['api_key']).strip('"')
             self.api_secret = str(props['api_secret']).strip('"')
@@ -871,19 +871,18 @@ def do_buy():
             LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
             sleep_for(4, 6)
             do_buy()
+    if CONF.exchange == 'liquid' and CONF.apply_leverage and CONF.leverage_default > 1:
+        bal = get_balances()
+        funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], get_current_price()) > abs(bal['crypto']) else CONF.base
+    else:
+        funding_currency = None
     i = 1
     while i <= CONF.trade_trials:
         buy_price = calculate_buy_price(get_current_price())
         order_size = calculate_buy_order_size(buy_price)
         if order_size is None:
             return None
-        if CONF.exchange == 'liquid' and CONF.apply_leverage and CONF.leverage_default > 1:
-            bal = get_balances()
-            funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], buy_price) > abs(bal['crypto']) else CONF.base
-            order = create_buy_order(buy_price, order_size, funding_currency)
-        else:
-            funding_currency = None
-            order = create_buy_order(buy_price, order_size)
+        order = create_buy_order(buy_price, order_size, funding_currency)
         if order is None:
             LOG.error("Could not create buy order over %s", order_size)
             return None
@@ -945,15 +944,13 @@ def do_sell():
         return None
     if CONF.exchange == 'liquid':
         bal = get_balances()
+        funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], get_current_price()) > bal['crypto'] else CONF.base
+    else:
+        funding_currency = None
     i = 1
     while i <= CONF.trade_trials:
         sell_price = calculate_sell_price(get_current_price())
-        if CONF.exchange == 'liquid':
-            funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], sell_price) > bal['crypto'] else CONF.base
-            order = create_sell_order(sell_price, order_size, funding_currency)
-        else:
-            funding_currency = None
-            order = create_sell_order(sell_price, order_size)
+        order = create_sell_order(sell_price, order_size, funding_currency)
         if order is None:
             LOG.error("Could not create sell order over %s", order_size)
             return None
