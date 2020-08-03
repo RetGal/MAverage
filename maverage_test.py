@@ -961,17 +961,25 @@ class MaverageTest(unittest.TestCase):
 
         self.assertEqual(4, leverage)
 
-    @patch('maverage.fetch_mayer', return_value={'current': 1, 'average': 1.5})
-    def test_print_mayer_buy(self, mock_fetch_mayer):
-        advice = maverage.print_mayer()
+    def test_evaluate_mayer_buy(self):
+        advice = maverage.evaluate_mayer({'current': 1, 'average': 1.5})
 
-        self.assertTrue(advice.endswith('BUY)'))
+        self.assertEqual('BUY', advice)
 
-    @patch('maverage.fetch_mayer', return_value={'current': 2.5, 'average': 1.5})
-    def test_print_mayer_sell(self, mock_fetch_mayer):
-        advice = maverage.print_mayer()
+    def test_evaluate_mayer_sell(self):
+        advice = maverage.evaluate_mayer({'current': 2.5, 'average': 1.5})
 
-        self.assertTrue(advice.endswith('SELL)'))
+        self.assertEqual('SELL', advice)
+
+    def test_evaluate_mayer_hold(self):
+        advice = maverage.evaluate_mayer({'current': 2.2, 'average': 1.5})
+
+        self.assertEqual('HOLD', advice)
+
+    def test_evaluate_mayer_na(self):
+        advice = maverage.evaluate_mayer()
+
+        self.assertEqual('n/a', advice)
 
     def test_append_performance(self):
         maverage.CONF = self.create_default_conf()
