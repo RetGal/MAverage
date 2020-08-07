@@ -1715,9 +1715,7 @@ if __name__ == '__main__':
     write_control_file()
     STATE = init()
 
-    if CONF.exchange == 'kraken':
-        MIN_ORDER_SIZE = 0.002
-    elif CONF.exchange == 'bitmex':
+    if CONF.exchange == 'bitmex':
         MIN_ORDER_SIZE = 0.0001
 
     if CONF.apply_leverage and CONF.exchange == 'bitmex':
