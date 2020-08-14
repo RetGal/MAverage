@@ -1059,6 +1059,7 @@ class MaverageTest(unittest.TestCase):
         conf.symbol = 'XBTEUR'
         conf.base = 'BTC'
         conf.quote = 'EUR'
+        conf.net_deposits_in_base_currency = 0
         conf.satoshi_factor = 0.00000001
         conf.bot_version = '0.0.1'
         conf.leverage_default = 2

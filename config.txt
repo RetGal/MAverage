@@ -10,6 +10,7 @@ pair = "BTC/USD"
 symbol = "XBTUSD"
 
 # bot properties
+net_deposits_in_base_currency = 0
 daily_report = True
 trade_report = True
 short_in_percent = 50
