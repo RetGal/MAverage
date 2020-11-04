@@ -39,7 +39,7 @@ class ExchangeConfig:
 
         try:
             props = config['config']
-            self.bot_version = '0.8.1'
+            self.bot_version = '0.8.2'
             self.exchange = str(props['exchange']).strip('"').lower()
             self.api_key = str(props['api_key']).strip('"')
             self.api_secret = str(props['api_secret']).strip('"')
@@ -145,7 +145,7 @@ def function_logger(console_level: int, log_file: str, file_level: int = None):
 
     if file_level is not None:
         fh = RotatingFileHandler("{}.log".format(log_file), mode='a', maxBytes=5 * 1024 * 1024, backupCount=4,
-                                 encoding=None, delay=0)
+                                 encoding=None, delay=False)
         fh.setLevel(file_level)
         fh.setFormatter(logging.Formatter('%(asctime)s - %(lineno)4d - %(levelname)-8s - %(message)s'))
         logger.addHandler(fh)
@@ -383,7 +383,7 @@ def append_balances(part: dict, margin_balance: dict, wallet_balance: float, dai
     Appends liquidation price, wallet balance, margin balance (including stats), used margin and leverage information
     """
     price = get_current_price()
-    if not wallet_balance['crypto'] and wallet_balance['fiat']:
+    if wallet_balance['crypto'] == 0 and wallet_balance['fiat'] > 0:
         wallet_balance['crypto'] = wallet_balance['fiat'] / price
     part['mail'].append("Wallet balance {}: {:>18.4f}".format(CONF.base, wallet_balance['crypto']))
     part['csv'].append("Wallet balance {}:;{:.4f}".format(CONF.base, wallet_balance['crypto']))
@@ -666,7 +666,7 @@ def get_wallet_balance():
             asset = CONF.base if CONF.base != 'BTC' else 'XBt'
             return {'crypto': float(EXCHANGE.private_post_tradebalance({'asset': asset})['result']['tb'])}
         if CONF.exchange == 'liquid':
-            balances = {'crypto': None, 'fiat': None}
+            balances = {'crypto': 0, 'fiat': 0}
             result = EXCHANGE.private_get_accounts_balance()
             if result is not None:
                 for bal in result:
@@ -887,6 +887,8 @@ def do_buy():
             do_buy()
     if CONF.exchange == 'liquid' and CONF.apply_leverage and CONF.leverage_default > 1:
         bal = get_balances()
+        if bal['crypto'] + bal['fiat'] == 0:
+            bal = get_wallet_balance()
         funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], get_current_price()) > abs(bal['crypto']) else CONF.base
     else:
         funding_currency = None
@@ -958,6 +960,8 @@ def do_sell():
         return None
     if CONF.exchange == 'liquid':
         bal = get_balances()
+        if bal['crypto'] + bal['fiat'] == 0:
+            bal = get_wallet_balance()
         funding_currency = CONF.quote if to_crypto_amount(bal['fiat'], get_current_price()) > bal['crypto'] else CONF.base
     else:
         funding_currency = None
@@ -998,6 +1002,8 @@ def calculate_buy_order_size(buy_price: float):
     """
     if CONF.exchange == 'liquid':
         bal = get_balances()
+        if bal['crypto'] + bal['fiat'] == 0:
+            bal = get_wallet_balance()
         size = to_crypto_amount(bal['fiat'] / 1.01, buy_price) if bal['fiat'] > abs(bal['crypto']) * buy_price else abs(bal['crypto']) / 1.01
 
     elif CONF.exchange == 'bitmex':
@@ -1044,6 +1050,8 @@ def calculate_sell_order_size():
     if CONF.exchange == 'liquid':
         total = None
         bal = get_balances()
+        if bal['crypto'] + bal['fiat'] == 0:
+            bal = get_wallet_balance()
         if bal['fiat'] > 0:
             price = get_current_price()
             if to_crypto_amount(bal['fiat'], price) > bal['crypto']:
