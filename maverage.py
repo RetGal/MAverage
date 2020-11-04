@@ -378,7 +378,7 @@ def append_performance(part: dict, margin_balance: float, net_deposits: float):
             part['csv'].append("Overall performance in {}:;{:.4f};% n/a".format(CONF.base, absolute_performance))
 
 
-def append_balances(part: dict, margin_balance: dict, wallet_balance: float, daily: bool):
+def append_balances(part: dict, margin_balance: dict, wallet_balance: dict, daily: bool):
     """
     Appends liquidation price, wallet balance, margin balance (including stats), used margin and leverage information
     """
