@@ -984,7 +984,7 @@ class MaverageTest(unittest.TestCase):
     def test_append_performance(self):
         maverage.CONF = self.create_default_conf()
         part = {'mail': [], 'csv': []}
-        maverage.append_performance(part, 100.2, 50.1)
+        maverage.append_performance(part, 100.2, 50.1, 10000)
         mail_part = ''.join(part['mail'])
         csv_part = ''.join(part['csv'])
 
@@ -994,7 +994,7 @@ class MaverageTest(unittest.TestCase):
     def test_append_performance_no_deposits(self):
         maverage.CONF = self.create_default_conf()
         part = {'mail': [], 'csv': []}
-        maverage.append_performance(part, 100.2, None)
+        maverage.append_performance(part, 100.2, None, 20000)
         mail_part = ''.join(part['mail'])
         csv_part = ''.join(part['csv'])
 

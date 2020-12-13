@@ -39,7 +39,7 @@ class ExchangeConfig:
 
         try:
             props = config['config']
-            self.bot_version = '0.8.2'
+            self.bot_version = '0.8.3'
             self.exchange = str(props['exchange']).strip('"').lower()
             self.api_key = str(props['api_key']).strip('"')
             self.api_secret = str(props['api_secret']).strip('"')
@@ -81,6 +81,7 @@ class Order:
     Holds the relevant data of an order
     """
     __slots__ = 'id', 'price', 'amount', 'side', 'type', 'datetime'
+    undefined = 'undefined'
 
     def __init__(self, ccxt_order=None):
         if ccxt_order:
@@ -101,8 +102,11 @@ class Order:
             self.datetime = ccxt_order['datetime']
 
     def __str__(self):
-        return "{} {} order id: {}, price: {}, amount: {}, created: {}".format(self.type, self.side, self.id,
-                                                                               self.price, self.amount, self.datetime)
+        return "{} {} order id: {}, price: {}, amount: {}, created: {}".format(self.type, self.side,
+                                                                               self.id if hasattr(self, 'id') and self.id else self.undefined,
+                                                                               self.price if hasattr(self, 'price') and self.price else self.undefined,
+                                                                               self.amount if hasattr(self, 'amount') and self.amount else self.undefined,
+                                                                               self.datetime if hasattr(self, 'datetime') and self.datetime else self.undefined)
 
 
 class Stats:
@@ -309,10 +313,11 @@ def create_report_part_performance(daily: bool):
     margin_balance = get_margin_balance()
     net_deposits = get_net_deposits()
     sleep_for(0, 1)
-    append_performance(part, margin_balance['total'], net_deposits)
+    price = get_current_price()
+    append_performance(part, margin_balance['total'], net_deposits, price)
     wallet_balance = get_wallet_balance()
     sleep_for(0, 1)
-    append_balances(part, margin_balance, wallet_balance, daily)
+    append_balances(part, margin_balance, wallet_balance, price, daily)
     return part
 
 
@@ -352,7 +357,7 @@ def send_mail(subject: str, text: str, attachment: str = None):
     LOG.info("Sent email to %s", recipients)
 
 
-def append_performance(part: dict, margin_balance: float, net_deposits: float):
+def append_performance(part: dict, margin_balance: float, net_deposits: float, price: float):
     """
     Calculates and appends the absolute and relative overall performance
     """
@@ -364,7 +369,10 @@ def append_performance(part: dict, margin_balance: float, net_deposits: float):
     else:
         part['mail'].append("Net deposits {}: {:>20.4f}".format(CONF.base, net_deposits))
         part['csv'].append("Net deposits {}:;{:.4f}".format(CONF.base, net_deposits))
-        absolute_performance = margin_balance - net_deposits
+        if CONF.exchange == 'liquid':
+            absolute_performance = margin_balance / price - net_deposits
+        else:
+            absolute_performance = margin_balance - net_deposits
         if net_deposits > 0 and absolute_performance != 0:
             relative_performance = round(100 / (net_deposits / absolute_performance), 2)
             part['mail'].append("Overall performance in {}: {:>+10.4f} ({:+.2f}%)".format(CONF.base,
@@ -378,20 +386,16 @@ def append_performance(part: dict, margin_balance: float, net_deposits: float):
             part['csv'].append("Overall performance in {}:;{:.4f};% n/a".format(CONF.base, absolute_performance))
 
 
-def append_balances(part: dict, margin_balance: dict, wallet_balance: dict, daily: bool):
+def append_balances(part: dict, margin_balance: dict, wallet_balance: dict, price: float, daily: bool):
     """
-    Appends liquidation price, wallet balance, margin balance (including stats), used margin and leverage information
+    Appends price, wallet balance, margin balance (including stats), used margin and leverage information
     """
-    price = get_current_price()
     if wallet_balance['crypto'] == 0 and wallet_balance['fiat'] > 0:
         wallet_balance['crypto'] = wallet_balance['fiat'] / price
     part['mail'].append("Wallet balance {}: {:>18.4f}".format(CONF.base, wallet_balance['crypto']))
     part['csv'].append("Wallet balance {}:;{:.4f}".format(CONF.base, wallet_balance['crypto']))
     today = calculate_daily_statistics(margin_balance['total'], price, daily)
-    if CONF.exchange != 'liquid':
-        append_margin_change(part, today, CONF.base)
-    else:
-        append_margin_change(part, today, CONF.quote)
+    append_margin_change(part, today, CONF.base)
     append_price_change(part, today, price)
     used_margin = calculate_used_margin_percentage(margin_balance)
     part['mail'].append("Used margin: {:>23.2f}%".format(used_margin))
@@ -461,6 +465,8 @@ def calculate_daily_statistics(m_bal: float, price: float, update_stats: bool):
     """
     global STATS
 
+    if CONF.exchange == 'liquid':
+        m_bal /= price
     today = {'mBal': m_bal, 'price': price}
     if STATS is None:
         if update_stats and datetime.datetime.utcnow().time() > datetime.datetime(2012, 1, 17, 12, 1).time():
@@ -535,11 +541,10 @@ def get_margin_balance():
             response = EXCHANGE.private_get_trading_accounts()
             bal = {'free': 0, 'total': 0, 'used': 0}
             for pos in response:
-                if pos['currency_pair_code'] == CONF.base + CONF.quote:
-                    if pos['leverage_level'] > 0:
-                        bal['free'] = float(pos['free_margin'])
-                        bal['total'] = float(pos['equity'])
-                        bal['used'] = float(pos['margin'])
+                if pos['currency_pair_code'] == CONF.base + CONF.quote and pos['leverage_level'] > 0:
+                    bal['free'] = float(pos['free_margin'])
+                    bal['total'] = float(pos['equity'])
+                    bal['used'] = float(pos['margin'])
         return bal
 
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
@@ -672,7 +677,7 @@ def get_wallet_balance():
                 for bal in result:
                     if bal['currency'] == CONF.quote:
                         balances['fiat'] = float(bal['balance'])
-                    if bal['currency'] == CONF.base:
+                    if bal['currency'] == CONF.base and float(bal['balance']) > 0.0000001:
                         balances['crypto'] = float(bal['balance'])
             return balances
 
@@ -694,9 +699,10 @@ def get_open_trades():
 
 def get_open_trade(currency_pair: str):
     trades = get_open_trades()
-    for trade in trades:
-        if trade['currency_pair_code'] == currency_pair:
-            return trade
+    if trades is not None:
+        for trade in trades:
+            if trade['currency_pair_code'] == currency_pair:
+                return trade
     return None
 
 
@@ -706,11 +712,12 @@ def update_stop_loss_trade(trade_id: str, stop_loss_price: float):
 
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
         if any(e in str(error.args) for e in STOP_ERRORS):
-            LOG.warning('Trade to be updated was closed already')
-            return
+            LOG.error('Unable to update trade {} with price {:.2f}'.format(trade_id, stop_loss_price), str(error.args))
+            return False
         LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
         sleep_for(4, 6)
         update_stop_loss_trade(trade_id, stop_loss_price)
+    return True
 
 
 def get_open_order():
@@ -884,7 +891,7 @@ def do_buy():
         except (ccxt.ExchangeError, ccxt.NetworkError) as error:
             LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
             sleep_for(4, 6)
-            do_buy()
+            return do_buy()
     if CONF.exchange == 'liquid' and CONF.apply_leverage and CONF.leverage_default > 1:
         bal = get_balances()
         if bal['crypto'] + bal['fiat'] == 0:
@@ -907,6 +914,8 @@ def do_buy():
         if order_status in ['open', 'live']:
             cancel_order(order)
             i += 1
+            if buy_or_sell() == 'SELL':
+                return do_sell()
             daily_report()
         else:
             return order
@@ -928,17 +937,14 @@ def calculate_buy_price(price: float):
 
 def poll_order_status(order_id: str, interval: int):
     order_status = 'open'
-    if CONF.exchange != 'liquid':
-        attempts = round(CONF.order_adjust_seconds / interval) if CONF.order_adjust_seconds > interval else 1
-        i = 0
-        while i < attempts and order_status == 'open':
-            sleep(interval-1)
-            order_status = fetch_order_status(order_id)
-            i += 1
-        return order_status
-    # liquid likes to return the cached status if queried repeatedly..
-    sleep_for(CONF.order_adjust_seconds, CONF.order_adjust_seconds)
-    return fetch_order_status(order_id)
+    attempts = round(CONF.order_adjust_seconds / interval) if CONF.order_adjust_seconds > interval else 1
+    i = 0
+    while i < attempts and order_status == 'open':
+        daily_report()
+        sleep(interval-1)
+        order_status = fetch_order_status(order_id)
+        i += 1
+    return order_status
 
 
 def do_sell():
@@ -954,7 +960,7 @@ def do_sell():
         except (ccxt.ExchangeError, ccxt.NetworkError) as error:
             LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
             sleep_for(4, 6)
-            do_sell()
+            return do_sell()
     order_size = calculate_sell_order_size()
     if order_size is None:
         return None
@@ -977,6 +983,8 @@ def do_sell():
         if order_status in ['open', 'live']:
             cancel_order(order)
             i += 1
+            if buy_or_sell() == 'BUY':
+                return do_buy()
             daily_report()
         else:
             return order
@@ -1124,7 +1132,10 @@ def fetch_order_status(order_id: str):
     :return status of the order (open, closed, not found)
     """
     try:
-        return EXCHANGE.fetch_order_status(order_id)
+        status = EXCHANGE.fetch_order_status(order_id)
+        if status:
+            return status.lower()
+        return 'not found'
     except ccxt.OrderNotFound:
         return 'not found'
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
@@ -1180,7 +1191,7 @@ def get_liquid_leverage_level():
     return 2
 
 
-def create_sell_order(price: float, amount_crypto: float, currency: dict = None):
+def create_sell_order(price: float, amount_crypto: float, currency: str = None):
     """
     Creates a sell order
     :param price: float price in fiat
@@ -1215,9 +1226,9 @@ def create_sell_order(price: float, amount_crypto: float, currency: dict = None)
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
         if any(e in str(error.args) for e in STOP_ERRORS):
             if CONF.exchange == 'bitmex':
-                LOG.warning('Order submission not possible - not selling %s', order_size)
+                LOG.warning('Order submission not possible - not selling %s %s', order_size, str(error.args))
             else:
-                LOG.warning('Order submission not possible - not selling %s', amount_crypto)
+                LOG.warning('Order submission not possible - not selling %s %s', amount_crypto, str(error.args))
             return None
         LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
         sleep_for(4, 6)
@@ -1258,9 +1269,9 @@ def create_buy_order(price: float, amount_crypto: float, currency: str = None):
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
         if any(e in str(error.args) for e in STOP_ERRORS):
             if CONF.exchange == 'bitmex':
-                LOG.warning('Order submission not possible - not buying %s', order_size)
+                LOG.warning('Order submission not possible - not buying %s %s', order_size, str(error.args))
             else:
-                LOG.warning('Order submission not possible - not buying %s', amount_crypto)
+                LOG.warning('Order submission not possible - not buying %s %s', amount_crypto, str(error.args))
             return None
         LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
         sleep_for(4, 6)
@@ -1292,7 +1303,7 @@ def create_market_sell_order(amount_crypto: float, currency: str = None):
 
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
         if any(e in str(error.args) for e in STOP_ERRORS):
-            LOG.warning('Insufficient available balance - not selling %s', amount_crypto)
+            LOG.warning('Order submission not possible - not selling %s %s', amount_crypto, str(error.args))
             return None
         LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
         sleep_for(4, 6)
@@ -1311,7 +1322,8 @@ def update_stop_loss_order(stop_loss_price: float, amount: float, side: str, sto
     if CONF.exchange == 'liquid':
         direction = 'sell' if side == 'LONG' else 'buy'
         if stop_loss_order and stop_loss_order.id:
-            update_stop_loss_trade(stop_loss_order.id, stop_loss_price)
+            if not update_stop_loss_trade(stop_loss_order.id, stop_loss_price):
+                return None
             stop_loss_order.price = stop_loss_price
             LOG.info('Updated stop loss {} order {:.2f}'.format(direction, stop_loss_price))
             return stop_loss_order
@@ -1319,7 +1331,8 @@ def update_stop_loss_order(stop_loss_price: float, amount: float, side: str, sto
         trade = get_open_trade(CONF.base + CONF.quote)
         if trade:
             tid = trade['id']
-            update_stop_loss_trade(tid, stop_loss_price)
+            if not update_stop_loss_trade(tid, stop_loss_price):
+                return None
             norder = Order()
             norder.id = tid
             norder.type = 'stop'
@@ -1332,6 +1345,7 @@ def update_stop_loss_order(stop_loss_price: float, amount: float, side: str, sto
     order_status_before_cancel = 'open'
     if stop_loss_order:
         order_status_before_cancel = cancel_order(stop_loss_order)
+        sleep_for(1, 3)
 
     pending_order = get_open_order()
     if pending_order and pending_order.type == 'stop':
@@ -1349,7 +1363,7 @@ def update_stop_loss_order(stop_loss_price: float, amount: float, side: str, sto
             elif CONF.exchange == 'kraken':
                 new_order = EXCHANGE.create_order(CONF.pair, 'stop-loss', direction, amount, stop_loss_price)
             norder = Order(new_order)
-            LOG.info('Created stop loss %s', str(norder))
+            LOG.info('Created %s', str(norder))
             return norder
 
         except (ccxt.ExchangeError, ccxt.NetworkError) as error:
@@ -1393,7 +1407,7 @@ def create_market_buy_order(amount_crypto: float, currency: str = None):
 
     except (ccxt.ExchangeError, ccxt.NetworkError) as error:
         if any(e in str(error.args) for e in STOP_ERRORS):
-            LOG.warning('Insufficient available balance - not buying %s', amount_crypto)
+            LOG.warning('Order submission not possible - not buying %s %s', amount_crypto, str(error.args))
             return None
         LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
         sleep_for(4, 6)
@@ -1431,6 +1445,8 @@ def get_position_side():
         return 'LONG' if crypto * price > fiat else 'SHORT'
     if CONF.exchange == 'liquid':
         pos = get_position_info()
+        if not pos:
+            return 'NONE'
         return 'LONG' if pos['position'] > 0 else 'SHORT'
 
 
@@ -1535,7 +1551,7 @@ def set_leverage(new_leverage: float):
         set_leverage(new_leverage)
 
 
-def to_crypto_amount(fiat_amount: int, price: float):
+def to_crypto_amount(fiat_amount: float, price: float):
     return round(fiat_amount / price, 8)
 
 
@@ -1579,33 +1595,34 @@ def dump_database():
 def do_post_trade_action(action: str, prefix: str = 'MA'):
     global STATE
 
-    if STATE['order'] is not None:
-        STATE['last_action'] = action
-        write_action(action)
-        LOG.info('Filled %s', str(STATE['order']))
-        if STATE['stop_loss_order']:
-            cancel_order(STATE['stop_loss_order'])
-        STATE['stop_loss_order'] = None
-        STATE['stop_loss_price'] = None
-        trade_report(prefix)
-        if CONF.interval == 10:
-            sleep(300)
+    STATE['last_action'] = action
+    write_action(action)
+    LOG.info('Filled %s', str(STATE['order']))
+    if CONF.exchange == 'liquid':
+        trade = get_open_trade(CONF.base + CONF.quote)
+        while not trade:
+            sleep_for(4, 5)
+            trade = get_open_trade(CONF.base + CONF.quote)
+        STATE['trade_id'] = trade['id']
+    trade_report(prefix)
+    if CONF.interval == 10:
+        sleep(300)
 
 
 def do_post_stop_loss_action():
     global STATE
 
-    LOG.info('Filled %s', str(STATE['stop_loss_order']))
+    LOG.info('Filled stop %s order id %s @ %s', STATE['stop_loss_order'].side, STATE['stop_loss_order'].id, STATE['stop_loss_price'])
     trade_report('SL')
     STATE['order'] = None
     STATE['stop_loss_order'] = None
     STATE['stop_loss_price'] = None
 
 
-def calculate_stop_loss_size():
+def calculate_stop_loss_size(force_recalculation: bool = False):
     if CONF.exchange == 'liquid':
         return None
-    if STATE['stop_loss_order']:
+    if STATE['stop_loss_order'] and not force_recalculation:
         return STATE['stop_loss_order'].amount
     pos = get_position_info()
     if CONF.exchange == 'bitmex':
