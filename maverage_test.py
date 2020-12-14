@@ -1048,6 +1048,40 @@ class MaverageTest(unittest.TestCase):
         mock_fetch_order_status.assert_has_calls(calls)
         self.assertEqual('open', status)
 
+    @patch('maverage.logging')
+    @patch('maverage.deactivate_bot')
+    def test_handle_account_errors_miss(self, mock_deactivate_bot, mock_logging):
+        maverage.LOG = mock_logging
+
+        maverage.handle_account_errors('error')
+
+        mock_logging.error.assert_not_called()
+        mock_deactivate_bot.assert_not_called()
+
+    @patch('maverage.logging')
+    @patch('maverage.deactivate_bot')
+    def test_handle_account_errors_match(self, mock_deactivate_bot, mock_logging):
+        maverage.LOG = mock_logging
+
+        maverage.handle_account_errors('account has been disabled')
+
+        mock_logging.error.assert_called()
+        mock_deactivate_bot.assert_called()
+
+    @patch('maverage.logging')
+    @patch('maverage.send_mail')
+    @patch('os.remove')
+    def test_deactivate_bot(self, mock_os_remove, mock_send_mail, mock_logging):
+        maverage.LOG = mock_logging
+        maverage.INSTANCE = 'test'
+        message = 'bang!'
+
+        with self.assertRaises(SystemExit):
+            maverage.deactivate_bot(message)
+
+        mock_logging.error.assert_called()
+        mock_send_mail.assert_called_with('Deactivated MA ' + maverage.INSTANCE, message)
+
     @staticmethod
     def create_default_conf():
         conf = maverage.ExchangeConfig
