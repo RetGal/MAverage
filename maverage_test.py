@@ -730,7 +730,7 @@ class MaverageTest(unittest.TestCase):
         mock_cancel_order.assert_called()
 
         maverage.cancel_order(order2)
-        mock_logging.warning.assert_called_with('Order to be canceled %s was in state %s', str(order2), 'filled')
+        mock_logging.warning.assert_called_with('Order to be canceled %s was in status: %s', str(order2), 'filled')
 
     def test_calculate_buy_price(self):
         maverage.CONF = self.create_default_conf()
@@ -745,6 +745,36 @@ class MaverageTest(unittest.TestCase):
         price = maverage.calculate_sell_price(10000)
 
         self.assertEqual(10001.8, price)
+
+    def test_is_better_price_long(self):
+        maverage.STATE = {'last_action': None, 'order': None, 'stop_loss_order': None, 'stop_loss_price': None}
+
+        self.assertTrue(maverage.is_better_price(19000, 'LONG'))
+
+    def test_is_better_price_long_existing_worse(self):
+        maverage.STATE = {'last_action': None, 'order': None, 'stop_loss_order': maverage.Order(), 'stop_loss_price': 20000}
+
+        self.assertTrue(maverage.is_better_price(21000, 'LONG'))
+
+    def test_is_better_price_long_existing_better(self):
+        maverage.STATE = {'last_action': None, 'order': None, 'stop_loss_order': maverage.Order(), 'stop_loss_price': 21000}
+
+        self.assertFalse(maverage.is_better_price(20000, 'LONG'))
+
+    def test_is_better_price_short(self):
+        maverage.STATE = {'last_action': None, 'order': None, 'stop_loss_order': None, 'stop_loss_price': None}
+
+        self.assertTrue(maverage.is_better_price(21000, 'SHORT'))
+
+    def test_is_better_price_short_existing_worse(self):
+        maverage.STATE = {'last_action': None, 'order': None, 'stop_loss_order': maverage.Order(), 'stop_loss_price': 20000}
+
+        self.assertTrue(maverage.is_better_price(19000, 'SHORT'))
+
+    def test_is_better_price_short_existing_better(self):
+        maverage.STATE = {'last_action': None, 'order': None, 'stop_loss_order': maverage.Order(), 'stop_loss_price': 19000}
+
+        self.assertFalse(maverage.is_better_price(20000, 'SHORT'))
 
     @patch('maverage.logging')
     @patch('ccxt.kraken')

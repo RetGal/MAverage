@@ -40,7 +40,7 @@ class ExchangeConfig:
 
         try:
             props = config['config']
-            self.bot_version = '0.8.4'
+            self.bot_version = '0.8.5'
             self.exchange = str(props['exchange']).strip('"').lower()
             self.api_key = str(props['api_key']).strip('"')
             self.api_secret = str(props['api_secret']).strip('"')
@@ -1171,30 +1171,30 @@ def cancel_order(order: Order):
     """
     Cancels an order
     """
-    try:
-        if order is not None:
-            status = EXCHANGE.fetch_order_status(order.id)
-            if not status:
-                LOG.warning('Order to be canceled not found %s', str(order))
-                return 'not found'
+    if order is not None:
+        status = fetch_order_status(order.id)
+        if status == 'not found':
+            LOG.warning('Order to be canceled not found %s', str(order))
+            return status
+        try:
             if status in ['open', 'live']:
                 EXCHANGE.cancel_order(order.id)
                 LOG.info('Canceled %s', str(order))
                 return status
             if status in ['closed', 'canceled', 'filled']:
-                LOG.warning('Order to be canceled %s was in state %s', str(order), status)
+                LOG.warning('Order to be canceled %s was in status: %s', str(order), status)
             else:
-                LOG.error('Order to be canceled %s was in state %s', str(order), status)
+                LOG.error('Order to be canceled %s was in status: %s', str(order), status)
             return status
 
-    except ccxt.OrderNotFound as error:
-        LOG.warning('Order to be canceled not found %s %s', str(order), str(error.args))
-        return 'not found'
-    except (ccxt.ExchangeError, ccxt.NetworkError) as error:
-        handle_account_errors(str(error.args))
-        LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
-        sleep_for(4, 6)
-        cancel_order(order)
+        except ccxt.OrderNotFound as error:
+            LOG.warning('Order to be canceled not found %s %s', str(order), str(error.args))
+            return 'not found'
+        except (ccxt.ExchangeError, ccxt.NetworkError) as error:
+            handle_account_errors(str(error.args))
+            LOG.error(RETRY_MESSAGE, type(error).__name__, str(error.args))
+            sleep_for(4, 6)
+            cancel_order(order)
 
 
 def get_liquid_leverage_level():
@@ -1668,6 +1668,14 @@ def fix_order_price(order: Order):
     return order
 
 
+def is_better_price(new_price: float, side: str):
+    if not new_price:
+        return False
+    if side == 'LONG':
+        return not STATE['stop_loss_order'] or new_price > STATE['stop_loss_price']
+    return not STATE['stop_loss_order'] or new_price < STATE['stop_loss_price']
+
+
 def handle_account_errors(error_message: str):
     if any(e in error_message.lower() for e in ACCOUNT_ERRORS):
         LOG.error(error_message)
@@ -1809,6 +1817,7 @@ if __name__ == '__main__':
                         STOP_LOSS_ORDER_STATUS = fetch_order_status(STATE['stop_loss_order'].id)
                     if STOP_LOSS_ORDER_STATUS in ['closed', 'filled']:
                         do_post_stop_loss_action()
+
                 if STATE['order'] is not None:
                     SIDE = 'SHORT' if str(STATE['order'].side).startswith('s') else 'LONG'
                     if not STATE['order'].price:
@@ -1816,25 +1825,14 @@ if __name__ == '__main__':
 
                     CURR_SLP = calculate_stop_loss_price(CURRENT_PRICE, STATE['order'].price, STATE['stop_loss_price'],
                                                          SIDE)
-                    if CURR_SLP:
-                        if SIDE == 'LONG':
-                            if not STATE['stop_loss_order'] or CURR_SLP > STATE['stop_loss_price']:
-                                STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP,
-                                                                                  calculate_stop_loss_size(),
-                                                                                  SIDE, STATE['stop_loss_order'])
-                                if STATE['stop_loss_order']:
-                                    STATE['stop_loss_price'] = STATE['stop_loss_order'].price
-                                else:
-                                    STATE['stop_loss_price'] = None
-                        if SIDE == 'SHORT':
-                            if not STATE['stop_loss_order'] or CURR_SLP < STATE['stop_loss_price']:
-                                STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP,
-                                                                                  calculate_stop_loss_size(),
-                                                                                  SIDE, STATE['stop_loss_order'])
-                                if STATE['stop_loss_order']:
-                                    STATE['stop_loss_price'] = STATE['stop_loss_order'].price
-                                else:
-                                    STATE['stop_loss_price'] = None
+
+                    if is_better_price(CURR_SLP, SIDE):
+                        STATE['stop_loss_order'] = update_stop_loss_order(CURR_SLP, calculate_stop_loss_size(),
+                                                                          SIDE, STATE['stop_loss_order'])
+                        if STATE['stop_loss_order']:
+                            STATE['stop_loss_price'] = STATE['stop_loss_order'].price
+                        else:
+                            STATE['stop_loss_price'] = None
 
         daily_report()
         sleep_for(110, 130)
