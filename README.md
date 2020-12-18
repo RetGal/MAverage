@@ -50,7 +50,7 @@ Die beiden Dateien *maverage.py* und *osiris.sh* müssen vor dem ersten Start mi
 Um die konfigurierten Moving Average Werte berechnen zu können, benötigen die *MAverage* Instanzen aktuelle Kursdaten.
 Diese holen sie sich aus der gemeinsamen *mamaster.db*. Diese wird durch *MAmaster* mit Werten befüllt, welche im 10 Minutenintervall abgefragt werden.
 
-In der Konfigurationsdatei von *MAmaster* (*mamaster.txt*) muss ebenfalls ein API-Key hinterlegt und die abzufragende Börse eingetragen werden.
+In der Konfigurationsdatei von *MAmaster* (*mamaster.txt*) muss dazu die abzufragende Börse eingetragen werden.
 Anschliessend eine *MAmaster* Instanz innerhalb einer *tmux* Session starten:
 
 `./mamaster.py`
