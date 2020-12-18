@@ -20,8 +20,6 @@ class ExchangeConfig:
 
         try:
             props = dict(config.items('config'))
-            self.api_key = props['api_key'].strip('"')
-            self.api_secret = props['api_secret'].strip('"')
             self.exchange = props['exchange'].strip('"').lower()
             self.db_name = props['db_name'].strip('"')
             self.interval = abs(int(props['interval']))
@@ -77,8 +75,6 @@ def connect_to_exchange():
 
     return exchanges[CONF.exchange]({
         'enableRateLimit': True,
-        'apiKey': CONF.api_key,
-        'secret': CONF.api_secret,
     })
 
 

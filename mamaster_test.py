@@ -48,8 +48,6 @@ class MamasterTest(unittest.TestCase):
     def create_default_conf():
         conf = mamaster.ExchangeConfig
         conf.exchange = 'bitmex'
-        conf.api_key = '1234'
-        conf.api_secret = 'secret'
         conf.max_weeks = 52
         return conf
 

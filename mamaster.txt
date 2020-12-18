@@ -1,7 +1,5 @@
 [config]
-exchange = "bitmex"
-api_key = "mxXCLkZA4g8cSXy7rHaSRi0C"
-api_secret = "BKSqn3xm1wkcpBz5a8wkoqV-UNNGYBY1g11NUg2tGKQlfnP0"
+exchange = "EXCHANGE_NAME"
 db_name = "mamaster.db"
 interval = 10
 max_weeks = 52
