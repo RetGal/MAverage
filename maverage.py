@@ -29,7 +29,7 @@ EMAIL_SENT = False
 EMAIL_ONLY = False
 RESET = False
 STOP_ERRORS = ['nsufficient', 'too low', 'not_enough', 'margin_below', 'liquidation price', 'closed_already', 'zero margin']
-ACCOUNT_ERRORS = ['account has been disabled', 'key is disabled', 'authentication failed']
+ACCOUNT_ERRORS = ['account has been disabled', 'key is disabled', 'authentication failed', 'permission denied']
 RETRY_MESSAGE = 'Got an error %s %s, retrying in about 5 seconds...'
 
 
@@ -237,26 +237,24 @@ def create_mail_content(daily: bool = False):
     settings_part = create_report_part_settings()
     general_part = create_mail_part_general()
 
-    if not daily:
-        trade = ["Last trade", "----------", '\n'.join(trade_part['mail']), '\n\n']
+    trade = ["Last trade", "----------", '\n'.join(trade_part['mail']), '\n\n'] if not daily else ''
     performance = ["Performance", "-----------",
                    '\n'.join(performance_part['mail']) + '\n* (change within 24 hours)', '\n\n']
     advice = ["Assessment / advice", "-------------------", '\n'.join(advice_part['mail']), '\n\n']
     settings = ["Your settings", "-------------", '\n'.join(settings_part['mail']), '\n\n']
     general = ["General", "-------", '\n'.join(general_part), '\n\n']
 
-    text = '' if daily else '\n'.join(trade)
+    text = '\n'.join(trade) + '\n'.join(performance) + '\n'.join(advice) + '\n'.join(settings) + '\n'.join(general)
+    if CONF.info:
+        text += CONF.info + '\n\n'
+    text += CONF.url + '\n'
 
-    if not CONF.info:
-        text += '\n'.join(performance) + '\n'.join(advice) + '\n'.join(settings) + '\n'.join(general) + CONF.url + '\n'
-    else:
-        text += '\n'.join(performance) + '\n'.join(advice) + '\n'.join(settings) + '\n'.join(general) + CONF.info \
-                + '\n\n' + CONF.url + '\n'
-
-    csv = None if not daily else INSTANCE + ';' + str(datetime.datetime.utcnow().replace(microsecond=0)) + ' UTC;' + \
-                                 (';'.join(performance_part['csv']) + ';' + ';'.join(advice_part['csv']) + ';' +
-                                  ';'.join(settings_part['csv']) + ';' + CONF.info + '\n')
-
+    csv = None if not daily else "{};{} UTC;{};{};{};{}\n".format(INSTANCE,
+                                                                  datetime.datetime.utcnow().replace(microsecond=0),
+                                                                  ';'.join(performance_part['csv']),
+                                                                  ';'.join(advice_part['csv']),
+                                                                  ';'.join(settings_part['csv']),
+                                                                  CONF.info)
     return {'text': text, 'csv': csv}
 
 
@@ -1772,7 +1770,7 @@ if __name__ == '__main__':
     else:
         INSTANCE = os.path.basename(input('Filename with API Keys (config): ') or 'config')
 
-    LOG_FILENAME = 'log' + os.path.sep + INSTANCE
+    LOG_FILENAME = 'log{}{}'.format(os.path.sep, INSTANCE)
     if not os.path.exists('log'):
         os.makedirs('log')
 
