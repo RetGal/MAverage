@@ -1,5 +1,6 @@
 import datetime
 import unittest
+from math import isclose
 from unittest import mock
 from unittest.mock import patch, call
 
@@ -95,67 +96,6 @@ class MaverageTest(unittest.TestCase):
         # about 4.8% reserve
         self.assertAlmostEqual(0.0952, order_size, 5)
 
-    @patch('maverage.get_balances', return_value={'crypto': 0.1, 'fiat': 10})
-    @patch('maverage.get_current_price', return_value=10000)
-    def test_calculate_sell_order_size_50_percent_short_of_all_used_liquid(self, mock_get_balances,
-                                                                           mock_get_current_price):
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.exchange = 'liquid'
-
-        order_size = maverage.calculate_sell_order_size()
-
-        # 1% reserve
-        self.assertAlmostEqual(0.04950, order_size, 5)
-
-    @patch('maverage.get_balances', return_value={'crypto': 0.1, 'fiat': 10})
-    @patch('maverage.get_current_price', return_value=10000)
-    def test_calculate_sell_order_size_100_percent_short_of_all_used_liquid(self, mock_get_balances,
-                                                                            mock_get_current_price):
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.exchange = 'liquid'
-        maverage.CONF.short_in_percent = 100
-
-        order_size = maverage.calculate_sell_order_size()
-
-        # 1% reserve
-        self.assertAlmostEqual(0.09901, order_size, 5)
-
-    @patch('maverage.get_balances', return_value={'crypto': 0, 'fiat': 1000})
-    @patch('maverage.get_current_price', return_value=10000)
-    def test_calculate_sell_order_size_50_percent_short_after_sl_liquid(self, mock_get_balances,
-                                                                        mock_get_current_price):
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.exchange = 'liquid'
-
-        order_size = maverage.calculate_sell_order_size()
-
-        # 1% reserve
-        self.assertAlmostEqual(0.04950, order_size, 5)
-
-    @patch('maverage.get_balances', return_value={'crypto': 0, 'fiat': 1000})
-    @patch('maverage.get_current_price', return_value=10000)
-    def test_calculate_sell_order_size_80_percent_short_after_sl_liquid(self, mock_get_balances,
-                                                                        mock_get_current_price):
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.exchange = 'liquid'
-        maverage.CONF.short_in_percent = 80
-
-        order_size = maverage.calculate_sell_order_size()
-
-        self.assertAlmostEqual(0.07921, order_size, 5)
-
-    @patch('maverage.get_balances', return_value={'crypto': 0.1, 'fiat': 1})
-    @patch('maverage.get_current_price', return_value=10000)
-    def test_calculate_sell_order_size_80_percent_short_coming_from_long_liquid(self, mock_get_balances,
-                                                                                mock_get_current_price):
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.exchange = 'liquid'
-        maverage.CONF.short_in_percent = 80
-
-        order_size = maverage.calculate_sell_order_size()
-
-        # 1% reserve
-        self.assertAlmostEqual(0.07921, order_size, 5)
 
     @patch('maverage.get_crypto_balance')
     @patch('maverage.get_position_info')
@@ -521,7 +461,7 @@ class MaverageTest(unittest.TestCase):
         stats.add_day(int(datetime.date.today().strftime("%Y%j")), same_day)
 
         day = stats.get_day(int(datetime.date.today().strftime("%Y%j")))
-        self.assertTrue(day['mBal'] == 0.999)
+        self.assertTrue(isclose(day['mBal'], 0.999, rel_tol=1e-09, abs_tol=1e-09))
         self.assertTrue(day['price'] == 10000)
 
     def test_stats_add_day_removes_oldest(self):
@@ -695,20 +635,6 @@ class MaverageTest(unittest.TestCase):
         maverage.get_margin_balance()
 
         mock_bitmex.fetch_balance.assert_called()
-
-    @patch('maverage.logging')
-    @patch('ccxt.liquid')
-    def test_get_margin_balance_liquid(self, mock_liquid, mock_logging):
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.base = 'BTC'
-        maverage.CONF.quote = 'USD'
-        maverage.CONF.exchange = 'liquid'
-        maverage.EXCHANGE = mock_liquid
-        maverage.LOG = mock_logging
-
-        maverage.get_margin_balance()
-
-        mock_liquid.private_get_trading_accounts.assert_called()
 
     @patch('maverage.logging')
     @mock.patch.object(ccxt.bitmex, 'cancel_order')
@@ -942,11 +868,6 @@ class MaverageTest(unittest.TestCase):
 
         self.assertEqual(10600, stop_loss_price)
 
-    def test_calculate_stop_loss_size_for_liquid(self):
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.exchange = 'liquid'
-
-        self.assertIsNone(maverage.calculate_stop_loss_size())
 
     def test_calculate_stop_loss_size_for_existing(self):
         maverage.CONF = self.create_default_conf()
@@ -959,37 +880,12 @@ class MaverageTest(unittest.TestCase):
     @patch('maverage.update_stop_loss_trade')
     def test_update_stop_loss_order(self, mock_update_stop_loss_trade):
         maverage.CONF = self.create_default_conf()
-        maverage.CONF.exchange = 'liquid'
         sl_order = maverage.Order()
         sl_order.id = '123'
 
         maverage.update_stop_loss_order(100, 'LONG', sl_order)
 
         mock_update_stop_loss_trade.assert_called_with(sl_order.id, 100)
-
-    def test_get_liquid_leverage_level_too_low(self):
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.leverage_default = 1
-
-        leverage = maverage.get_liquid_leverage_level()
-
-        self.assertIsNone(leverage)
-
-    def test_get_liquid_leverage_level_invalid(self):
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.leverage_default = 3
-
-        leverage = maverage.get_liquid_leverage_level()
-
-        self.assertEqual(2, leverage)
-
-    def test_get_liquid_leverage_level_valid(self):
-        maverage.CONF = self.create_default_conf()
-        maverage.CONF.leverage_default = 4
-
-        leverage = maverage.get_liquid_leverage_level()
-
-        self.assertEqual(4, leverage)
 
     def test_evaluate_mayer_buy(self):
         advice = maverage.evaluate_mayer({'current': 1, 'average': 1.5})

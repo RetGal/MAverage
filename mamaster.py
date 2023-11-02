@@ -70,8 +70,7 @@ def get_current_price(tries: int = 0):
 
 def connect_to_exchange():
     exchanges = {'bitmex': ccxt.bitmex,
-                 'kraken': ccxt.kraken,
-                 'liquid': ccxt.liquid}
+                 'kraken': ccxt.kraken}
 
     return exchanges[CONF.exchange]({
         'enableRateLimit': True,
