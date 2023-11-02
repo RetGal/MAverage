@@ -883,7 +883,7 @@ class MaverageTest(unittest.TestCase):
         sl_order = maverage.Order()
         sl_order.id = '123'
 
-        maverage.update_stop_loss_order(100, 'LONG', sl_order)
+        maverage.update_stop_loss_order(100, 0.5,'LONG', sl_order)
 
         mock_update_stop_loss_trade.assert_called_with(sl_order.id, 100)
 
