@@ -489,7 +489,7 @@ class MaverageTest(unittest.TestCase):
         today = maverage.calculate_daily_statistics(100, 8000.0, False)
 
         self.assertTrue(today['mBal'] == 100)
-        self.assertTrue(today['price'] == 8000.0)
+        self.assertTrue(isclose(today['price'], 8000.0, rel_tol=1e-09, abs_tol=1e-09))
         mock_persist_statistics.assert_not_called()
 
     def test_calculate_statistics_positive_change(self):
