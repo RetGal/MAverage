@@ -5,7 +5,7 @@
 
 ## Voraussetzungen
 
-*MAverage* setzt *Python* Version 3 oder grösser voraus.
+*MAverage* setzt *Python* Version 3.8 oder grösser voraus.
 Im Kern verwendet *MAverage* die [ccxt](https://github.com/ccxt/ccxt) Bibliothek. Diese gilt es mittels [pip](https://pypi.org/project/pip/) zu installieren:
 
 `python -m pip install ccxt`
